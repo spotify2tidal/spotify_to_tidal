@@ -4,8 +4,6 @@ spotify:
   username: your_spotify_username
   redirect_uri: http://localhost:8888/callback
 
-tidal:
-  quality: high # high / lossless
 
 # uncomment this block if you want to only sync specific playlist IDs
 #sync_playlists:

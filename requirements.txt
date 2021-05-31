@@ -2,5 +2,3 @@ spotipy==2.10.0
 tidalapi==0.6.8
 pyyaml==5.3.1
 tqdm==4.45.0
-mutagen==1.45.0
-psutil==5.8.0
