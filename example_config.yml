@@ -1,0 +1,17 @@
+spotify:
+  client_id: your_client_id
+  client_secret: your_client_secret
+  username: your_spotify_username
+  redirect_uri: http://localhost:8888/callback
+
+tidal:
+  quality: high # high / lossless
+
+# uncomment this block if you want to only sync specific playlist IDs
+#sync_playlists:
+#  - spotify_id: 1ABCDEqsABCD6EaABCDa0a
+#    tidal_id: a0b1234-0a1b-012a-abcd-a1b234c5d6d7
+
+# uncomment this block if you want to sync all playlists in the account with some exceptions
+#excluded_playlists:
+#  - spotify:playlist:1ABCDEqsABCD6EaABCDa0a
