@@ -28,12 +28,14 @@ def open_tidal_session():
 
     session = tidalapi.Session()
     if previous_session:
-        success = session.load_oauth_session(previous_session['session_id'],
+        try:
+            if session.load_oauth_session(previous_session['session_id'],
                                    previous_session['token_type'],
                                    previous_session['access_token'],
-                                   previous_session['refresh_token'] )
-        if success:
-            return session
+                                   previous_session['refresh_token'] ):
+                return session
+        except Exception as e:
+            print("Error loading previous Tidal Session: \n" + str(e) )
 
     login, future = session.login_oauth()
     print('Login with the webbrowser: ' + login.verification_uri_complete)
