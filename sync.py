@@ -9,13 +9,14 @@ import spotipy
 import tidalapi
 import time
 from tqdm import tqdm
+from unidecode import unidecode
 from urllib.parse import urljoin
 import webbrowser
 import yaml
 
 def simple(input_string):
     # only take the first part of a string before any hyphens or brackets to account for different versions
-    return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
+    return unidecode(input_string).split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
 def duration_match(tidal_track, spotify_track, tolerance=2):
     # the duration of the two tracks must be the same to within 2 seconds
