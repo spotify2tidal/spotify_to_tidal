@@ -174,9 +174,7 @@ class TidalPlaylistCache:
         self._data = tidal_session.get_playlist_tracks(playlist.id)
 
     def _search(self, spotify_track):
-        ''' check if the given spotify track was already in the tidal playlist.
-            this uses a looser criteria than the main search algorithm to allow
-            the user to manually add tracks that weren't initially found '''
+        ''' check if the given spotify track was already in the tidal playlist.'''
         results = []
         for tidal_track in self._data:
             if match(tidal_track, spotify_track):
