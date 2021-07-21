@@ -87,7 +87,7 @@ def set_tidal_playlist(session, playlist_id, track_ids):
     # erases any items in the given playlist, then adds all of the tracks given in track_ids
     # had to hack this together because the API doesn't include it
 
-    chunk_size = 25 # add/delete tracks in chunks of no more than this many tracks
+    chunk_size = 20 # add/delete tracks in chunks of no more than this many tracks
     request_params = {
         'sessionId': session.session_id,
         'countryCode': session.country_code,
