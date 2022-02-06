@@ -162,7 +162,7 @@ def get_tracks_from_spotify_playlist(spotify_session, spotify_playlist):
     output = []
     results = spotify_session.playlist_tracks(spotify_playlist['id'], fields="next,items(track(name,album(name,artists),artists,track_number,duration_ms,id))")
     while True:
-        output.extend([r['track'] for r in results['items']])
+        output.extend([r['track'] for r in results['items'] if r['track'] is not None])
         # move to the next page of results if there are still tracks remaining in the playlist
         if results['next']:
             results = spotify_session.next(results)
