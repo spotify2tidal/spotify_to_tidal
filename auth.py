@@ -19,14 +19,17 @@ def open_spotify_session(config):
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
 
-def open_tidal_session():
+def open_tidal_session(config = None):
     try:
         with open('.session.yml', 'r') as session_file:
             previous_session = yaml.safe_load(session_file)
     except OSError:
         previous_session = None
 
-    session = tidalapi.Session()
+    if config:
+        session = tidalapi.Session(config=config)
+    else:
+        session = tidalapi.Session()
     if previous_session:
         try:
             if session.load_oauth_session(previous_session['session_id'],
