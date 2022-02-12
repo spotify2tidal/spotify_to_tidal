@@ -98,7 +98,10 @@ def tidal_search(spotify_track_and_cache, tidal_session):
 def get_tidal_playlists_dict(tidal_session):
     # a dictionary of name --> playlist
     tidal_playlists = tidal_session.get_user_playlists(tidal_session.user.id)
-    return {playlist.name: playlist for playlist in tidal_playlists}
+    output = {}
+    for playlist in tidal_playlists:
+        output[playlist.name] = playlist
+    return output 
 
 def repeat_on_exception(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
@@ -222,17 +225,22 @@ def sync_list(spotify_session, tidal_session, playlists, config):
     results.append(tidal_id)
   return results
 
+def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
+    if spotify_playlist['name'] in tidal_playlists:
+      # if there's an existing tidal playlist with the name of the current playlist then use that
+      tidal_playlist = tidal_playlists[spotify_playlist['name']]
+      return (spotify_playlist['id'], tidal_playlist.id)
+    else:
+      print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
+      return (spotify_playlist['id'], None)
+    
+
 def get_user_playlist_mappings(spotify_session, tidal_session, config):
   results = []
   spotify_playlists = get_playlists_from_spotify(spotify_session, config)
   tidal_playlists = get_tidal_playlists_dict(tidal_session)
   for spotify_playlist in spotify_playlists:
-    if spotify_playlist['name'] in tidal_playlists:
-      # if there's an existing tidal playlist with the name of the current playlist then use that
-      tidal_playlist = tidal_playlists[spotify_playlist['name']]
-      results.append((spotify_playlist['id'], tidal_playlist.id))
-    else:
-      results.append((spotify_playlist['id'], None))
+      results.append( pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists) )
   return results
 
 def get_playlists_from_spotify(spotify_session, config):
@@ -269,7 +277,9 @@ if __name__ == '__main__':
         sys.exit("Could not connect to Tidal")
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
-        sync_list(spotify_session, tidal_session, [(args.uri, None)], config)
+        tidal_playlists = get_tidal_playlists_dict(tidal_session)
+        tidal_playlist = pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
+        sync_list(spotify_session, tidal_session, [tidal_playlist], config)
     elif config.get('sync_playlists', None):
         # if the config contains a sync_playlists list of mappings then use that
         sync_list(spotify_session, tidal_session, get_playlists_from_config(config), config)

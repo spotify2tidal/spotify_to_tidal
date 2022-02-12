@@ -70,4 +70,7 @@ def create_tidal_playlist(session, name):
     result = session.request('POST','users/%s/playlists' % session.user.id ,data={'title': name})
     return session.get_playlist(result.json()['uuid'])
 
-
+def delete_tidal_playlist(session, playlist):
+    etag = session.request('GET','playlists/%s' % playlist.id).headers['ETag']
+    headers = {'if-none-match' : etag}
+    session.request('DELETE','playlists/%s' % playlist.id, headers=headers)
