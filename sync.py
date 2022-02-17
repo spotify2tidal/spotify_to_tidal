@@ -277,6 +277,7 @@ if __name__ == '__main__':
         sys.exit("Could not connect to Tidal")
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
+        spotify_playlist = spotify_session.playlist(args.uri)
         tidal_playlists = get_tidal_playlists_dict(tidal_session)
         tidal_playlist = pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
         sync_list(spotify_session, tidal_session, [tidal_playlist], config)
