@@ -54,6 +54,7 @@ def set_tidal_playlist(session, playlist_id, track_ids):
     # add all new items to the playlist
     offset = 0
     progress = tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids))
+    track_ids.reverse()
     while offset < len(track_ids):
         count = min(chunk_size, len(track_ids) - offset)
         data = {
