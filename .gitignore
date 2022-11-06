@@ -1,0 +1,7 @@
+.idea/
+venv/
+__pycache__/
+.cache*
+.session.yml
+config.yml
+favorites.yml
