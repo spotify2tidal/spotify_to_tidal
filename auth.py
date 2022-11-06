@@ -32,10 +32,9 @@ def open_tidal_session(config = None):
         session = tidalapi.Session()
     if previous_session:
         try:
-            if session.load_oauth_session(previous_session['session_id'],
-                                   previous_session['token_type'],
-                                   previous_session['access_token'],
-                                   previous_session['refresh_token'] ):
+            if session.load_oauth_session(token_type= previous_session['token_type'],
+                                   access_token=previous_session['access_token'],
+                                   refresh_token=previous_session['refresh_token'] ):
                 return session
         except Exception as e:
             print("Error loading previous Tidal Session: \n" + str(e) )
