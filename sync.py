@@ -271,7 +271,7 @@ def sync_liked_songs(spotify_session, tidal_session, config):
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
 
-def sync_list(spotify_session, tidal_session, playlists, config, withFavorites= True):
+def sync_list(spotify_session, tidal_session, playlists, config, withFavorites= False):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
