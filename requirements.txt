@@ -1,5 +1,5 @@
-spotipy==2.19.0
+spotipy==2.21.0
 requests>=2.28.1 # for tidalapi
 tidalapi==0.7.0
-pyyaml==5.3.1
-tqdm==4.45.0
+pyyaml==6.0
+tqdm==4.64.1
