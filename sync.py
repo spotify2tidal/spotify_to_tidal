@@ -4,6 +4,7 @@ import argparse
 from auth import open_tidal_session, open_spotify_session
 from functools import partial
 from multiprocessing import Pool
+import requests
 import sys
 import spotipy
 import tidalapi
@@ -85,7 +86,7 @@ def tidal_search(spotify_track_and_cache, tidal_session):
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
         album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
         for album in album_result['albums']:
-            album_tracks = tidal_session.album(album.id).tracks()
+            album_tracks = album.tracks()
             if len(album_tracks) >= spotify_track['track_number']:
                 track = album_tracks[spotify_track['track_number'] - 1]
                 if match(track, spotify_track):
@@ -103,24 +104,26 @@ def get_tidal_playlists_dict(tidal_session):
         output[playlist.name] = playlist
     return output 
 
-def repeat_on_exception(function, *args, remaining=5, **kwargs):
+def repeat_on_http_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
         return function(*args, **kwargs)
-    except Exception as e:
+    except requests.exceptions.HTTPError as e:
         if remaining:
-            print(f"{type(e).__name__} occurred. Retrying {remaining} more times.\n\n{traceback.format_exc()}")
+            print(f"HTTPError {e.json()} occurred. Retrying {remaining} more times.")
         else:
-            print(f"Repeated error {type(e).__name__} occurred and could not be recovered\n\n The following arguments were provided:")
+            print(f"Repeated HTTPError {e.json()} occurred and could not be recovered\n\n The following arguments were provided:")
             print(args)
+            print(traceback.format_exc())
             sys.exit(1)
-        time.sleep(5)
-        return repeat_on_exception(function, *args, remaining=remaining-1, **kwargs)
+        sleep_schedule = {5: 1, 4:10, 3:60, 2:5*60, 1:10*60} # sleep variable length of time depending on retry number
+        time.sleep(sleep_schedule.get(remaining, 1))
+        return repeat_on_http_error(function, *args, remaining=remaining-1, **kwargs)
 
 def _enumerate_wrapper(value_tuple, function, **kwargs):
     # just a wrapper which accepts a tuple from enumerate and returns the index back as the first argument
     index, value = value_tuple
-    return (index, repeat_on_exception(function, value, **kwargs))
+    return (index, repeat_on_http_error(function, value, **kwargs))
 
 def call_async_with_progress(function, values, description, num_processes, **kwargs):
     results = len(values)*[None]
@@ -142,7 +145,7 @@ def get_tracks_from_spotify_playlist(spotify_session, spotify_playlist):
             return output
 
 class TidalPlaylistCache:
-    def __init__(self, playlist, tidal_session):
+    def __init__(self, playlist):
         self._data = playlist.tracks()
 
     def _search(self, spotify_track):
@@ -168,8 +171,8 @@ class TidalPlaylistCache:
                 results.append( (track, None) )
         return (results, cache_hits)
 
-def tidal_playlist_is_dirty(tidal_session, playlist_id, new_track_ids):
-    old_tracks = tidal_session.playlist(playlist_id).tracks()
+def tidal_playlist_is_dirty(playlist, new_track_ids):
+    old_tracks = playlist.tracks()
     if len(old_tracks) != len(new_track_ids):
         return True
     for i in range(len(old_tracks)):
@@ -198,7 +201,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
     tidal_track_ids = []
-    spotify_tracks, cache_hits = TidalPlaylistCache(tidal_playlist, tidal_session).search(spotify_session, spotify_playlist)
+    spotify_tracks, cache_hits = TidalPlaylistCache(tidal_playlist).search(spotify_session, spotify_playlist)
     if cache_hits == len(spotify_tracks):
         print("No new tracks to search in Spotify playlist '{}'".format(spotify_playlist['name']))
         return
@@ -213,7 +216,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
 
-    if tidal_playlist_is_dirty(tidal_session, tidal_playlist.id, tidal_track_ids):
+    if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
     else:
         print("No changes to write to Tidal playlist")
@@ -222,7 +225,7 @@ def sync_list(spotify_session, tidal_session, playlists, config):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
-    repeat_on_exception(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
+    repeat_on_http_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
     results.append(tidal_id)
   return results
 
