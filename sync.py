@@ -104,27 +104,33 @@ def get_tidal_playlists_dict(tidal_session):
         output[playlist.name] = playlist
     return output 
 
-def repeat_on_http_error(function, *args, remaining=5, **kwargs):
+def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
         return function(*args, **kwargs)
-    except requests.exceptions.HTTPError as e:
-        resp = e.response
+    except requests.exceptions.RequestException as e:
         if remaining:
-            print(f"HTTPError {resp.status_code} occurred. Retrying {remaining} more times.\n\n{resp.text}")
+            print(f"{str(e)} occurred, retrying {remaining} times")
         else:
-            print(f"Repeated HTTPError {resp.status_code} occurred and could not be recovered\n\n{resp.text}\n\nThe following arguments were provided:")
-            print(args)
+            print(f"{str(e)} could not be recovered")
+
+        if not e.response is None:
+            print(f"Response message: {e.response.text}")
+            print(f"Response headers: {e.response.headers}")
+
+        if not remaining:
+            print("Aborting sync")
+            print(f"The following arguments were provided:\n\n {str(args)}")
             print(traceback.format_exc())
             sys.exit(1)
         sleep_schedule = {5: 1, 4:10, 3:60, 2:5*60, 1:10*60} # sleep variable length of time depending on retry number
         time.sleep(sleep_schedule.get(remaining, 1))
-        return repeat_on_http_error(function, *args, remaining=remaining-1, **kwargs)
+        return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 def _enumerate_wrapper(value_tuple, function, **kwargs):
     # just a wrapper which accepts a tuple from enumerate and returns the index back as the first argument
     index, value = value_tuple
-    return (index, repeat_on_http_error(function, value, **kwargs))
+    return (index, repeat_on_request_error(function, value, **kwargs))
 
 def call_async_with_progress(function, values, description, num_processes, **kwargs):
     results = len(values)*[None]
@@ -226,7 +232,7 @@ def sync_list(spotify_session, tidal_session, playlists, config):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
-    repeat_on_http_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
+    repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
     results.append(tidal_id)
   return results
 
