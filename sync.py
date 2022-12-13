@@ -109,10 +109,11 @@ def repeat_on_http_error(function, *args, remaining=5, **kwargs):
     try:
         return function(*args, **kwargs)
     except requests.exceptions.HTTPError as e:
+        resp = e.response
         if remaining:
-            print(f"HTTPError {e.json()} occurred. Retrying {remaining} more times.")
+            print(f"HTTPError {resp.status_code} occurred. Retrying {remaining} more times.\n\n{resp.text}")
         else:
-            print(f"Repeated HTTPError {e.json()} occurred and could not be recovered\n\n The following arguments were provided:")
+            print(f"Repeated HTTPError {resp.status_code} occurred and could not be recovered\n\n{resp.text}\n\nThe following arguments were provided:")
             print(args)
             print(traceback.format_exc())
             sys.exit(1)
