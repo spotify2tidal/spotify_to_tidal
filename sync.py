@@ -22,6 +22,11 @@ def simple(input_string):
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
+def isrc_match(tidal_track, spotify_track):
+    if "isrc" in spotify_track["external_ids"]:
+        return tidal_track.isrc == spotify_track["external_ids"]["isrc"]
+    return False
+
 def duration_match(tidal_track, spotify_track, tolerance=2):
     # the duration of the two tracks must be the same to within 2 seconds
     return abs(tidal_track.duration - spotify_track['duration_ms']/1000) < tolerance
@@ -75,9 +80,15 @@ def artist_match(tidal_track, spotify_track):
     if get_tidal_artists(tidal_track).intersection(get_spotify_artists(spotify_track)) != set():
         return True
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
-  
+
 def match(tidal_track, spotify_track):
-    return duration_match(tidal_track, spotify_track) and name_match(tidal_track, spotify_track) and artist_match(tidal_track, spotify_track)
+    return (
+            isrc_match(tidal_track, spotify_track)
+            or duration_match(tidal_track, spotify_track)
+            and name_match(tidal_track, spotify_track)
+            and artist_match(tidal_track, spotify_track)
+    )
+
 
 def tidal_search(spotify_track_and_cache, tidal_session):
     spotify_track, cached_tidal_track = spotify_track_and_cache
@@ -142,7 +153,10 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
 
 def get_tracks_from_spotify_playlist(spotify_session, spotify_playlist):
     output = []
-    results = spotify_session.playlist_tracks(spotify_playlist['id'], fields="next,items(track(name,album(name,artists),artists,track_number,duration_ms,id))")
+    results = spotify_session.playlist_tracks(
+        spotify_playlist["id"],
+        fields="next,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))",
+    )
     while True:
         output.extend([r['track'] for r in results['items'] if r['track'] is not None])
         # move to the next page of results if there are still tracks remaining in the playlist
