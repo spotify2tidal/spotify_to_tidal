@@ -82,11 +82,10 @@ def artist_match(tidal_track, spotify_track):
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
 
 def match(tidal_track, spotify_track):
-    return (
-            isrc_match(tidal_track, spotify_track)
-            or duration_match(tidal_track, spotify_track)
-            and name_match(tidal_track, spotify_track)
-            and artist_match(tidal_track, spotify_track)
+    return isrc_match(tidal_track, spotify_track) or (
+        duration_match(tidal_track, spotify_track)
+        and name_match(tidal_track, spotify_track)
+        and artist_match(tidal_track, spotify_track)
     )
 
 
