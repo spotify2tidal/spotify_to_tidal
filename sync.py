@@ -16,7 +16,6 @@ import unicodedata
 import yaml
 import random
 
-
 def normalize(s):
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
