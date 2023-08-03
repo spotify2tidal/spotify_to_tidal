@@ -16,6 +16,7 @@ import unicodedata
 import yaml
 import random
 
+
 def normalize(s):
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
@@ -90,7 +91,7 @@ def match(tidal_track, spotify_track):
     )
 
 
-def tidal_search(spotify_track_and_cache, tidal_session, base_delay=10, max_retries=5):
+def tidal_search(spotify_track_and_cache, tidal_session, base_delay=5, max_retries=5):
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
         return cached_tidal_track
@@ -120,15 +121,17 @@ def tidal_search(spotify_track_and_cache, tidal_session, base_delay=10, max_retr
             return None  # No matching track found
 
         except requests.exceptions.RequestException as e:
-            if e.response and e.response.status_code == 429:
-                print("Tidal API error (429). Applying backoff strategy...")
-            else:
-                print("Applying backoff strategy...")
+            if isinstance(e.response, requests.Response) and e.response.status_code == 429:
+                print("HTTP error on 429. Applying backoff strategy...")
+                time.sleep(base_delay)
+                return search_with_backoff()
+
+            print(f"Error occurred: {str(e)}")
+            print("Applying backoff strategy...")
             time.sleep(base_delay)
             return search_with_backoff()
 
     return search_with_backoff()
-
 
 def get_tidal_playlists_dict(tidal_session):
     # a dictionary of name --> playlist
@@ -264,7 +267,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
         task_description, 
         config.get('subprocesses', 50), 
         tidal_session=tidal_session,
-        base_delay=5,    # Adjust these values as needed
+        base_delay=10,    # Adjust these values as needed
         max_retries=5
     )
     for index, tidal_track in enumerate(tidal_tracks):
