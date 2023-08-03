@@ -14,6 +14,8 @@ from tqdm import tqdm
 import traceback
 import unicodedata
 import yaml
+import random
+
 
 def normalize(s):
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
@@ -89,22 +91,47 @@ def match(tidal_track, spotify_track):
     )
 
 
-def tidal_search(spotify_track_and_cache, tidal_session):
+def tidal_search(spotify_track_and_cache, tidal_session, base_delay=5, max_retries=5):
     spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track: return cached_tidal_track
-    # search for album name and first album artist
-    if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-        album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
-        for album in album_result['albums']:
-            album_tracks = album.tracks()
-            if len(album_tracks) >= spotify_track['track_number']:
-                track = album_tracks[spotify_track['track_number'] - 1]
+    if cached_tidal_track:
+        return cached_tidal_track
+
+    def search_with_backoff():
+        try:
+            # Search for album name and first album artist
+            if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
+                album_result = tidal_session.search(
+                    simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']),
+                    models=[tidalapi.album.Album]
+                )
+                for album in album_result['albums']:
+                    album_tracks = album.tracks()
+                    if len(album_tracks) >= spotify_track['track_number']:
+                        track = album_tracks[spotify_track['track_number'] - 1]
+                        if match(track, spotify_track):
+                            return track
+            
+            # If album search fails, then search for track name and first artist
+            search_query = simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name'])
+            track_results = tidal_session.search(search_query, models=[tidalapi.media.Track])['tracks']
+            for track in track_results:
                 if match(track, spotify_track):
                     return track
-    # if that fails then search for track name and first artist
-    for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
-        if match(track, spotify_track):
-            return track
+            
+            return None  # No matching track found
+
+        except requests.exceptions.RequestException as e:
+            if isinstance(e.response, requests.Response) and e.response.status_code == 429:
+                print("HTTP error on 429. Applying backoff strategy...")
+                time.sleep(base_delay)
+                return search_with_backoff()
+
+            print(f"Error occurred: {str(e)}")
+            print("Applying backoff strategy...")
+            time.sleep(base_delay)
+            return search_with_backoff()
+
+    return search_with_backoff()
 
 def get_tidal_playlists_dict(tidal_session):
     # a dictionary of name --> playlist
@@ -114,13 +141,16 @@ def get_tidal_playlists_dict(tidal_session):
         output[playlist.name] = playlist
     return output 
 
-def repeat_on_request_error(function, *args, remaining=5, **kwargs):
-    # utility to repeat calling the function up to 5 times if an exception is thrown
+def repeat_on_request_error(function, *args, remaining=5, max_retries=5, base_delay=5, **kwargs):
+    # utility to repeat calling the function up to max_retries times if an exception is thrown
     try:
         return function(*args, **kwargs)
     except requests.exceptions.RequestException as e:
         if remaining:
-            print(f"{str(e)} occurred, retrying {remaining} times")
+            if e.response and e.response.status_code == 429:
+                print("Tidal API error.Too many requests. Applying backoff strategy...")
+            else:
+                print(f"{str(e)} occurred, retrying {remaining} times")
         else:
             print(f"{str(e)} could not be recovered")
 
@@ -133,9 +163,13 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
             print(f"The following arguments were provided:\n\n {str(args)}")
             print(traceback.format_exc())
             sys.exit(1)
-        sleep_schedule = {5: 1, 4:10, 3:60, 2:5*60, 1:10*60} # sleep variable length of time depending on retry number
-        time.sleep(sleep_schedule.get(remaining, 1))
-        return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
+        
+        # Calculate the delay based on exponential backoff strategy with randomized jitter
+        delay = base_delay * (2 ** (max_retries - remaining)) + random.uniform(0, 1)
+        
+        print(f"Waiting for {delay} seconds before retrying...")
+        time.sleep(delay)
+        return repeat_on_request_error(function, *args, remaining=remaining-1, max_retries=max_retries, base_delay=base_delay, **kwargs)
 
 def _enumerate_wrapper(value_tuple, function, **kwargs):
     # just a wrapper which accepts a tuple from enumerate and returns the index back as the first argument
@@ -227,7 +261,15 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(
+        tidal_search, 
+        spotify_tracks, 
+        task_description, 
+        config.get('subprocesses', 50), 
+        tidal_session=tidal_session,
+        base_delay=10,    # Adjust these values as needed
+        max_retries=5
+    )
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
