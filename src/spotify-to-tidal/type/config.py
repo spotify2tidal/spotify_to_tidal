@@ -1,5 +1,4 @@
-from typing import List, Literal, TypedDict, Union
-
+from typing import TypedDict, Literal, List
 
 class SpotifyConfig(TypedDict):
     client_id: str

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 import logging
 import sys
-import typing
 
-from .types import SpotifyConfig, TidalConfig
-
+from .types import *
+from typing import Union, NoReturn, Optional
 import spotipy
 import tidalapi
 import webbrowser
 import yaml
 
-def open_spotify_session(config: SpotifyConfig) -> typing.Union[spotipy.Spotify, typing.NoReturn]:
+def open_spotify_session(config: SpotifyConfig) -> Union[spotipy.Spotify, NoReturn]:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
 				       scope='playlist-read-private',
 				       client_id=config['client_id'],
@@ -24,7 +23,7 @@ def open_spotify_session(config: SpotifyConfig) -> typing.Union[spotipy.Spotify,
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
 
-def open_tidal_session(config: typing.Optional[tidalapi.Config]=None) -> tidalapi.Session:
+def open_tidal_session(config: Optional[tidalapi.Config]=None) -> tidalapi.Session:
     try:
         with open('.session.yml', 'r') as session_file:
             previous_session: TidalConfig = yaml.safe_load(session_file)

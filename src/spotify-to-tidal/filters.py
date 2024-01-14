@@ -1,15 +1,16 @@
 import unicodedata
-from .types import *
-from typing import List, Set
+from .type import *
+from typing import List
+from itertools import chain
 
 def normalize(s: str) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
-def simple(input_string) -> str:
+def simple(input_string: str) -> str:
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
-def isrc_match(tidal_track, spotify_track) -> bool:
+def isrc_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
     if "isrc" in spotify_track["external_ids"]:
         return tidal_track.isrc == spotify_track["external_ids"]["isrc"]
     return False
@@ -34,9 +35,8 @@ def name_match(tidal_track: TidalTrack, spotify_track) -> bool:
     simple_spotify_track = simple(spotify_track['name'].lower()).split('feat.')[0].strip()
     return simple_spotify_track in tidal_track.name.lower() or normalize(simple_spotify_track) in normalize(tidal_track.name.lower())
 
-from itertools import chain
 
-def artist_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> List[str]:
+def artist_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
 
     def split_artist_name(artist: str) -> List[str]:
        if '&' in artist:

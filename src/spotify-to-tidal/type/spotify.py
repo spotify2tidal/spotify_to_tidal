@@ -1,4 +1,6 @@
-from typing import Dict, List, Literal, Optional, TypedDict
+from spotipy import Spotify
+from typing import TypedDict, List, Dict, Mapping, Literal, Optional
+
 
 class SpotifyImage(TypedDict):
     url: str
@@ -9,10 +11,11 @@ class SpotifyFollower(TypedDict):
     href: str
     total: int
 
-
+SpotifyID = str
+SpotifySession = Spotify
 
 class SpotifyArtist(TypedDict):
-    external_urls: Dict[str, str]
+    external_urls: Mapping[str, str]
     followers: SpotifyFollower
     genres: List[str]
     href: str

@@ -1,15 +1,15 @@
-from .config import *
-from .playlist import *
+from .config import SpotifyConfig, TidalConfig, PlaylistConfig, SyncConfig
+from .playlist import TidalPlaylist
 from .spotify import SpotifyTrack
 
 from spotipy import Spotify
 from tidalapi import Session, Track
+from tidalapi.playlist import Playlist, UserPlaylist
 
-TidalID = type[str]
-SpotifyID = type[str]
-SpotifySession = Spotify
+TidalID = str
 TidalSession = Session
 TidalTrack = Track
+SpotifySession = Spotify
 
 __all__ = [
     'SpotifyConfig',

@@ -1,5 +1,6 @@
 from tqdm import tqdm
-from .types import TidalPlaylist
+from .type import TidalPlaylist, TidalID
+from typing import List
 
 def _remove_indices_from_playlist(playlist: TidalPlaylist, indices) -> None:
     headers = {'If-None-Match': playlist._etag}
@@ -14,7 +15,7 @@ def clear_tidal_playlist(playlist: TidalPlaylist, chunk_size=20) -> None:
             _remove_indices_from_playlist(playlist, indices)
             progress.update(len(indices))
     
-def add_multiple_tracks_to_playlist(playlist: TidalPlaylist, track_ids, chunk_size=20) -> None:
+def add_multiple_tracks_to_playlist(playlist: TidalPlaylist, track_ids: List[TidalID], chunk_size=20) -> None:
     offset = 0
     with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
         while offset < len(track_ids):
@@ -23,6 +24,6 @@ def add_multiple_tracks_to_playlist(playlist: TidalPlaylist, track_ids, chunk_si
             offset += count
             progress.update(count)
 
-def set_tidal_playlist(playlist: TidalPlaylist, track_ids) -> None:
+def set_tidal_playlist(playlist: TidalPlaylist, track_ids: List[TidalID]) -> None:
     clear_tidal_playlist(playlist)
     add_multiple_tracks_to_playlist(playlist, track_ids)
