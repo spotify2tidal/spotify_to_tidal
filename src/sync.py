@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
+from .types import SyncConfig, PlaylistConfig
+
 import argparse
 import logging
 import typing
-from auth import open_tidal_session, open_spotify_session
+from .auth import open_tidal_session, open_spotify_session
 from functools import partial
 from multiprocessing import Pool
 import requests
@@ -11,7 +13,7 @@ import sys
 import spotipy
 import tidalapi
 import tidalapi.playlist
-from tidalapi_patch import set_tidal_playlist
+from .tidalapi_patch import set_tidal_playlist
 import time
 from tqdm import tqdm
 import traceback
@@ -92,7 +94,7 @@ def match(tidal_track, spotify_track):
     )
 
 
-def tidal_search(spotify_track_and_cache, tidal_session):
+def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session):
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track: return cached_tidal_track
     # search for album name and first album artist
@@ -117,7 +119,7 @@ def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> typing.Dict[str
         output[playlist.name] = playlist
     return output 
 
-def repeat_on_request_error(function, *args, remaining=5, **kwargs):
+def repeat_on_request_error(function: typing.Callable, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
         return function(*args, **kwargs)
@@ -200,7 +202,7 @@ def tidal_playlist_is_dirty(playlist, new_track_ids):
             return True
     return False
 
-def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
+def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_id, tidal_id, config):
     try:
         spotify_playlist = spotify_session.playlist(spotify_id)
     except spotipy.SpotifyException as e:
@@ -240,7 +242,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
     else:
         print("No changes to write to Tidal playlist")
 
-def sync_list(spotify_session, tidal_session, playlists, config):
+def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists: typing.List[PlaylistConfig], config: SyncConfig):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
@@ -257,7 +259,7 @@ def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
       return (spotify_playlist['id'], None)
     
 
-def get_user_playlist_mappings(spotify_session, tidal_session, config):
+def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: SyncConfig):
   results = []
   spotify_playlists = get_playlists_from_spotify(spotify_session, config)
   tidal_playlists = get_tidal_playlists_dict(tidal_session)
@@ -299,7 +301,7 @@ if __name__ == '__main__':
 
     logging.root = logging.basicConfig(level=log_map[min(args.verbosity, 3)], format='[%(asctime)s] %(levelname)s %(module)s:%(funcName)s:%(lineno)d - %(message)s', stream=sys.stderr)
     with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+        config: SyncConfig = yaml.safe_load(f)
     spotify_session = open_spotify_session(config['spotify'])
     
     tidal_session = open_tidal_session()
