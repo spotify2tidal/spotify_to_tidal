@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-
+import logging
 import sys
+import typing
+
 import spotipy
 import tidalapi
 import webbrowser
 import yaml
 
-def open_spotify_session(config):
+def open_spotify_session(config) -> typing.Union[spotipy.Spotify, typing.NoReturn]:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
 				       scope='playlist-read-private',
 				       client_id=config['client_id'],
@@ -15,11 +17,12 @@ def open_spotify_session(config):
     try:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
-        sys.exit("Error opening Spotify sesion; could not get token for username: ".format(config['username']))
+        logging.critical("Error opening Spotify sesion; could not get token for username: %s",config['username'])
+        sys.exit(1)
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
 
-def open_tidal_session(config = None):
+def open_tidal_session(config = None) -> tidalapi.Session:
     try:
         with open('.session.yml', 'r') as session_file:
             previous_session = yaml.safe_load(session_file)
@@ -32,12 +35,15 @@ def open_tidal_session(config = None):
         session = tidalapi.Session()
     if previous_session:
         try:
-            if session.load_oauth_session(token_type= previous_session['token_type'],
-                                   access_token=previous_session['access_token'],
-                                   refresh_token=previous_session['refresh_token'] ):
+            if session.load_oauth_session(
+                token_type= previous_session['token_type'],
+                access_token=previous_session['access_token'],
+                refresh_token=previous_session['refresh_token']
+            ):
                 return session
         except Exception as e:
-            print("Error loading previous Tidal Session: \n" + str(e) )
+            logging.warn("Error loading previous Tidal Session")
+            logging.debug(e)
 
     login, future = session.login_oauth()
     print('Login with the webbrowser: ' + login.verification_uri_complete)
