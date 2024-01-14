@@ -2,7 +2,7 @@
 import logging
 import sys
 
-from .types import *
+from .type import *
 from typing import Union, NoReturn, Optional
 import spotipy
 import tidalapi

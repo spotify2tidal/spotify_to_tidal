@@ -7,6 +7,7 @@ from tidalapi import Session, Track
 from tidalapi.playlist import Playlist, UserPlaylist
 
 TidalID = str
+SpotifyID = str
 TidalSession = Session
 TidalTrack = Track
 SpotifySession = Spotify
