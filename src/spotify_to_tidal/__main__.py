@@ -3,7 +3,6 @@ import logging
 import sys
 import yaml
 from pathlib import Path
-
 from .auth import open_tidal_session, open_spotify_session
 from .sync import sync_list
 from .sync import get_tidal_playlists_dict, pick_tidal_playlist_for_spotify_playlist, get_playlists_from_config, get_user_playlist_mappings
@@ -23,8 +22,9 @@ def setup_args() -> argparse.ArgumentParser:
 
     return parser
 
-
+logger = None
 def setup_logging(verbosity: int) -> None:
+    global logger
     log_map = [
         logging.WARNING,
         logging.INFO,
@@ -37,14 +37,13 @@ def setup_logging(verbosity: int) -> None:
     strm_hndl.setFormatter(fmt)
     logger.addHandler(strm_hndl)
     logger.debug("Initialized logging.")
-    return logger
 
 
 def parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace | NoReturn:
     args = parser.parse_args()
-    logger = setup_logging(args.verbosity)
+    setup_logging(args.verbosity)
     if args.config is None:
-        logging.debug("No config specified, checking other args.")
+        logger.debug("No config specified, checking other args.")
         if args.client_id is None:
             raise RuntimeError("No config specified and Spotify client ID not specified.")
         if args.client_secret is None:
