@@ -13,13 +13,17 @@ from .sync import (
     get_user_playlist_mappings,
     get_playlists_from_spotify,
 )
-from .type import SyncConfig
+from .type import SyncConfig, SpotifyConfig
 
 from typing import NoReturn
 
 
 def setup_args() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    synopsis = """
+Syncs spotify playlists to Tidal. Can specify a config yaml or specify Spotify Oauth values on the command line.
+
+"""
+    parser = argparse.ArgumentParser(description=synopsis)
 
     parser.add_argument(
         "-c",
@@ -45,7 +49,7 @@ def setup_args() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-v",
-        help="verbosity level, increases per v specified",
+        help="verbosity level, increases per v (max of 3) specified",
         default=0,
         action="count",
         dest="verbosity",
@@ -53,7 +57,7 @@ def setup_args() -> argparse.ArgumentParser:
     parser.add_argument(
         "-a",
         "--all",
-        help="Sync all spotify playlists to Tidal",
+        help="Sync all spotify playlists to Tidal. This will not honor the config's exclude list.",
         action="store_true",
         default=False,
         dest="all_playlists",
@@ -112,9 +116,18 @@ def parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace | NoReturn
 def main():
     parser = setup_args()
     args = parse_args(parser)
-    with open(args.config, "r") as f:
-        config: SyncConfig = yaml.safe_load(f)
-    spotify_session = open_spotify_session(config["spotify"])
+    if args.config:
+        with open(args.config, "r") as f:
+            config: SyncConfig = yaml.safe_load(f)
+            spt_cfg: SpotifyConfig = config['spotify']
+    else:
+        spt_cfg: SpotifyConfig = {
+            'client_id': args.client_id,
+            'client_secret': args.client_secret,
+            'username': args.spotify_uname,
+            'redirect_uri': 'http://localhost:8888/callback',
+        }
+    spotify_session = open_spotify_session(spt_cfg)
     tidal_session = open_tidal_session()
     if not tidal_session.check_login():
         logging.critical("Could not connect to Tidal")
@@ -150,13 +163,11 @@ def main():
         sync_list(spotify_session, tidal_session, id_map, config)
     elif config.get("sync_playlists", None):
         # if the config contains a sync_playlists list of mappings then use that
-        exit(1)
         sync_list(
             spotify_session, tidal_session, get_playlists_from_config(config), config
         )
     else:
         # otherwise just use the user playlists in the Spotify account
-        exit(1)
         sync_list(
             spotify_session,
             tidal_session,
