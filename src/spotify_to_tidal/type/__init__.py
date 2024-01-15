@@ -4,7 +4,6 @@ from .spotify import SpotifyTrack
 
 from spotipy import Spotify
 from tidalapi import Session, Track
-from tidalapi.playlist import Playlist, UserPlaylist
 
 TidalID = str
 SpotifyID = str
