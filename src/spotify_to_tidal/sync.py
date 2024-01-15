@@ -159,7 +159,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
             tidal_track_ids.append(tidal_track.id)
         else:
             color = ('\033[91m', '\033[0m')
-            logging.warn(color[0] + "Could not find track %s: %s - %s" + color[1],spotify_track['id'], ",".join(map(dict.get('name'), spotify_track['artists'])), spotify_track['name'])
+            logging.warn(color[0] + "Could not find track %s: %s - %s" + color[1], spotify_track['id'], ",".join(map(lambda x: x['name'], spotify_track['artists'])), spotify_track['name'])
 
     if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)

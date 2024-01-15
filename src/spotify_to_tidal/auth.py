@@ -9,6 +9,8 @@ import tidalapi
 import webbrowser
 import yaml
 
+logger = logging.getLogger(__name__)
+
 def open_spotify_session(config: SpotifyConfig) -> Union[spotipy.Spotify, NoReturn]:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
 				       scope='playlist-read-private',
@@ -18,7 +20,7 @@ def open_spotify_session(config: SpotifyConfig) -> Union[spotipy.Spotify, NoRetu
     try:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
-        logging.critical("Error opening Spotify sesion; could not get token for username: %s",config['username'])
+        logger.critical("Error opening Spotify sesion; could not get token for username: %s",config['username'])
         sys.exit(1)
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
@@ -43,8 +45,8 @@ def open_tidal_session(config: Optional[tidalapi.Config]=None) -> tidalapi.Sessi
             ):
                 return session
         except Exception as e:
-            logging.warn("Error loading previous Tidal Session")
-            logging.debug(e)
+            logger.warn("Error loading previous Tidal Session")
+            logger.debug(e)
 
     login, future = session.login_oauth()
     print('Login with the webbrowser: ' + login.verification_uri_complete)

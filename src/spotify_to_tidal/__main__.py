@@ -2,25 +2,64 @@ import argparse
 import logging
 import sys
 import yaml
+from pathlib import Path
 
 from .auth import open_tidal_session, open_spotify_session
 from .sync import sync_list
 from .sync import get_tidal_playlists_dict, pick_tidal_playlist_for_spotify_playlist, get_playlists_from_config, get_user_playlist_mappings
 from .type import SyncConfig
 
-def main():
+from typing import NoReturn
+
+def setup_args() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument('-c', '--config', type=Path, help='Location of the spotify to tidal config file', dest='config')
+    parser.add_argument('-i', '--id', type=str, help="Spotify client ID", dest='client_id')
+    parser.add_argument('-s', '--secret', type=str, help='Spotify client secret', dest='client_secret')
+    parser.add_argument('-U', '--username', type=str, help="Spotify username", dest='spotify_uname')
+    parser.add_argument('-u', '--uri', help='Synchronize a specific URI instead of the one in the config', dest='uri')
+    parser.add_argument('-v', help='verbosity level, increases per v specified', default=0, action='count', dest='verbosity')
+
+    return parser
+
+
+def setup_logging(verbosity: int) -> None:
     log_map = [
         logging.WARNING,
         logging.INFO,
         logging.DEBUG
     ]
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='config.yml', help='location of the config file')
-    parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
-    parser.add_argument('-v', help='verbosity level, increases per v specified', default=0, action='count', dest='verbosity')
-    args = parser.parse_args()
+    logger = logging.getLogger(__name__)
+    logger.setLevel(log_map[min(verbosity, 2)])
+    fmt = logging.Formatter('[%(asctime)s] %(levelname)s %(module)s:%(funcName)s:%(lineno)d - %(message)s')
+    strm_hndl = logging.StreamHandler(sys.stdout)
+    strm_hndl.setFormatter(fmt)
+    logger.addHandler(strm_hndl)
+    logger.debug("Initialized logging.")
+    return logger
 
-    logging.root = logging.basicConfig(level=log_map[min(args.verbosity, 3)], format='[%(asctime)s] %(levelname)s %(module)s:%(funcName)s:%(lineno)d - %(message)s', stream=sys.stderr)
+
+def parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace | NoReturn:
+    args = parser.parse_args()
+    logger = setup_logging(args.verbosity)
+    if args.config is None:
+        logging.debug("No config specified, checking other args.")
+        if args.client_id is None:
+            raise RuntimeError("No config specified and Spotify client ID not specified.")
+        if args.client_secret is None:
+            raise RuntimeError("No config specified and Spotify secret ID not specified.")
+        if args.spotify_uname is None:
+            raise RuntimeError("No config specified and Spotify username not specified.")
+    if args.config and any(x is not None for x in (args.client_id, args.client_secret, args.spotify_uname)):
+        raise RuntimeError("Config specfied with config attributes. Only specify a config or all attributes.")
+    # TODO: more validation?
+    return args
+
+
+def main():
+    parser = setup_args()
+    args = parse_args(parser)
     with open(args.config, 'r') as f:
         config: SyncConfig = yaml.safe_load(f)
     spotify_session = open_spotify_session(config['spotify'])
