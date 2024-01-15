@@ -4,6 +4,12 @@ from typing import List
 import logging
 from itertools import chain
 
+pkg_logger = logging.getLogger(__package__)
+logger = logging.getLogger(__name__)
+for hndl in pkg_logger.handlers:
+    logger.addHandler(hndl)
+
+
 def normalize(s: str) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
@@ -46,7 +52,6 @@ def name_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
 
 
 def artist_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
-
     def split_artist_name(artist: str) -> List[str]:
        if '&' in artist:
            return artist.split('&')
@@ -57,9 +62,11 @@ def artist_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
     def split_and_clean(artist: str) -> List[str]:
         return map(lambda x: x.strip().casefold(), split_artist_name(artist))
     spotify_artists = set(chain.from_iterable(map(lambda x: split_and_clean(x['name']), spotify_track['artists'])))
+    print(spotify_artists)
     spotify_artists_normalized = set(map(normalize, spotify_artists))
-    tidal_artists = chain.from_iterable(map(lambda x: x.name, tidal_track.artists))
+    tidal_artists = chain(map(lambda x: x.name, tidal_track.artists))
     tidal_artists = set(chain.from_iterable(map(split_and_clean, tidal_artists)))
+    print(tidal_artists)
     tidal_artists_normalized = set(map(normalize, tidal_artists))
 
     return tidal_artists.intersection(spotify_artists) or tidal_artists_normalized.intersection(spotify_artists_normalized)
@@ -79,4 +86,4 @@ class FilterOtherPkgs(logging.Filter):
 
 class Filter429(logging.Filter):
     def filter(self, record: logging.LogRecord):
-        return record.getMessage() == 'HTTP error on 429' or record.getMessage() == 'HTTP error on 412' or record.module.split('.')[0] != __package__
+        return record.getMessage() == 'HTTP error on 429' or record.getMessage() == 'HTTP error on 412' or not record.module.startswith(__package__)

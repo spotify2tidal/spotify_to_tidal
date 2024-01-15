@@ -7,7 +7,7 @@ name = "spotify_to_tidal"
 version = "0.1.0"
 dependencies = [
   "spotipy==2.21.0",
-  "tidalapi==0.7.2",
+  "tidalapi==0.7.3",
   "pyyaml==6.0",
   "tqdm==4.64.1",
 ]

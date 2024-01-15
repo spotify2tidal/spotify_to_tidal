@@ -32,12 +32,13 @@ def setup_logging(verbosity: int) -> None:
     ]
     strm_hndl = logging.StreamHandler(sys.stdout)
     strm_hndl.addFilter(Filter429('tidalapi'))
+    strm_hndl.addFilter(Filter429('tidalapi.*'))
     strm_hndl.addFilter(Filter429('spotipy'))
     # strm_hndl.addFilter(FilterOtherPkgs('*'))
     
     fmt = logging.Formatter('[%(asctime)s] %(levelname)s %(module)s:%(funcName)s:%(lineno)d - %(message)s')
     strm_hndl.setFormatter(fmt)
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(__package__)
     logger.setLevel(log_map[min(verbosity, 2)])
     logger.addHandler(strm_hndl)
     logger.debug("Initialized logging.")
