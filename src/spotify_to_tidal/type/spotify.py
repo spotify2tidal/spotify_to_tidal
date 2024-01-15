@@ -7,12 +7,15 @@ class SpotifyImage(TypedDict):
     height: int
     width: int
 
+
 class SpotifyFollower(TypedDict):
     href: str
     total: int
 
+
 SpotifyID = str
 SpotifySession = Spotify
+
 
 class SpotifyArtist(TypedDict):
     external_urls: Mapping[str, str]
@@ -26,8 +29,9 @@ class SpotifyArtist(TypedDict):
     type: str
     uri: str
 
+
 class SpotifyAlbum(TypedDict):
-    album_type: Literal['album', 'single', 'compilation']
+    album_type: Literal["album", "single", "compilation"]
     total_tracks: int
     available_markets: List[str]
     external_urls: Dict[str, str]
@@ -36,11 +40,12 @@ class SpotifyAlbum(TypedDict):
     images: List[SpotifyImage]
     name: str
     release_date: str
-    release_date_precision: Literal['year', 'month', 'day']
-    restrictions: Optional[Dict[Literal['reason'], str]]
-    type: Literal['album']
+    release_date_precision: Literal["year", "month", "day"]
+    restrictions: Optional[Dict[Literal["reason"], str]]
+    type: Literal["album"]
     uri: str
     artists: List[SpotifyArtist]
+
 
 class SpotifyTrack(TypedDict):
     album: SpotifyAlbum
@@ -55,10 +60,10 @@ class SpotifyTrack(TypedDict):
     id: str
     is_playable: bool
     linked_from: Dict
-    restrictions: Optional[Dict[Literal['reason'], str]]
+    restrictions: Optional[Dict[Literal["reason"], str]]
     name: str
     popularity: int
     preview_url: str
     track_number: int
-    type: Literal['track']
+    type: Literal["track"]
     uri: str

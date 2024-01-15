@@ -12,15 +12,15 @@ TidalTrack = Track
 SpotifySession = Spotify
 
 __all__ = [
-    'SpotifyConfig',
-    'TidalConfig',
-    'PlaylistConfig',
-    'SyncConfig',
-    'TidalPlaylist',
-    'TidalID',
-    'SpotifyID',
-    'SpotifySession',
-    'TidalSession',
-    'TidalTrack',
-    'SpotifyTrack'
+    "SpotifyConfig",
+    "TidalConfig",
+    "PlaylistConfig",
+    "SyncConfig",
+    "TidalPlaylist",
+    "TidalID",
+    "SpotifyID",
+    "SpotifySession",
+    "TidalSession",
+    "TidalTrack",
+    "SpotifyTrack",
 ]

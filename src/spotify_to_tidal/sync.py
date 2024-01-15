@@ -1,37 +1,38 @@
 #!/usr/bin/env python3
 
-# from . import *
-
 import logging
+import sys
+import time
+import traceback
 import typing
-from typing import Any, Dict, List, Tuple, Callable
-from .type import *
+
 from functools import partial
 from multiprocessing import Pool
+from typing import Any, Dict, List, Tuple, Callable, Optional
+
 import requests
-import sys
 import spotipy
 import tidalapi
 import tidalapi.playlist
+from tqdm import tqdm
+
+from .type import *
 from .tidalapi_patch import set_tidal_playlist
 from .filters import *
-import time
-from tqdm import tqdm
-import traceback
 
-from tqdm.contrib.concurrent import process_map
-import concurrent.futures
 
 logger = logging.getLogger(__name__)
 
-def tidal_search(spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None], tidal_session: TidalSession) -> TidalTrack:
+
+def tidal_search(
+    spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None],
+    tidal_session: TidalSession,
+) -> TidalTrack:
     # Patch annoying 429 message
-    # logging.getLogger('tidalapi').addFilter(Filter429('tidalapi.*'))
-    # logging.getLogger('tidalapi.requests').addFilter(Filter429('tidalapi.requests'))
-    logging.getLogger('tidalapi.requests').disabled = True
+    logging.getLogger("tidalapi.requests").disabled = True
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
-        logger.debug("Found %s in cache.", spotify_track['name'])
+        logger.debug("Found %s in cache.", spotify_track["name"])
         return cached_tidal_track
     # search for album name and first album artist
     if (
@@ -39,50 +40,45 @@ def tidal_search(spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None]
         and "artists" in spotify_track["album"]
         and len(spotify_track["album"]["artists"])
     ):
-        for artist in spotify_track["album"]['artists']:
+        for artist in spotify_track["album"]["artists"]:
             album_result = tidal_session.search(
                 simple(artist["name"].casefold())
                 + " "
                 + simple(spotify_track["album"]["name"].casefold()),
                 models=[tidalapi.album.Album],
             )
-            logger.debug("Looking for album %s in Tidal" % spotify_track['album']['name'])
+            logger.debug(
+                "Looking for album %s in Tidal" % spotify_track["album"]["name"]
+            )
             for album in album_result["albums"]:
                 album_tracks = album.tracks()
                 if len(album_tracks) >= spotify_track["track_number"]:
                     track = album_tracks[spotify_track["track_number"] - 1]
                     if match(track, spotify_track):
                         return track
-    
+
     # if that fails then search for track name and first artist
-    logger.info("Did not find track %s in any artist albums, running general search." % spotify_track['name'])
+    logger.info(
+        "Did not find track %s in any artist albums, running general search."
+        % spotify_track["name"]
+    )
     logger.debug("Searching spotify for %s", spotify_track["name"])
     spotify_track_name = spotify_track["name"].casefold()
-    logger.debug('Normalized track name: %s', spotify_track_name)
-    for artist in spotify_track['artists']:
-        artist_name = artist['name'].casefold()
+    logger.debug("Normalized track name: %s", spotify_track_name)
+    for artist in spotify_track["artists"]:
+        artist_name = artist["name"].casefold()
         search_res = tidal_session.search(
-            artist_name
-            + " "
-            + spotify_track_name,
+            artist_name + " " + spotify_track_name,
             models=[tidalapi.media.Track],
         )
-        res: TidalTrack | None = next((x for x in search_res["tracks"] if match(x, spotify_track)), None)
+        res: TidalTrack | None = next(
+            (x for x in search_res["tracks"] if match(x, spotify_track)), None
+        )
         if res:
             logger.info("Found song %s in Tidal!", spotify_track["name"])
             return res
     logger.info("Could not find song %s" % spotify_track["name"])
     return res
-
-
-# def new_search(spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None], tidal_session: TidalSession):
-#     # Patch annoying 429 message
-#     logging.getLogger('tidalapi').addFilter(Filter429('tidalapi.*'))
-#     logging.getLogger('tidalapi.requests').addFilter(Filter429('tidalapi.requests'))
-#     from collections import Counter
-#     a = chain.from_iterable(map(lambda x: x['artists'], None))
-#     b = chain(map(lambda x: x['name']), a)
-#     artists = map(lambda x: x['artists'])
 
 
 def get_tidal_playlists_dict(tidal_session: TidalSession) -> Dict[str, TidalPlaylist]:
@@ -95,7 +91,6 @@ def get_tidal_playlists_dict(tidal_session: TidalSession) -> Dict[str, TidalPlay
 
 
 def repeat_on_request_error(function: Callable, *args, **kwargs):
-    
     # utility to repeat calling the function up to 5 times if an exception is thrown
     sleep_schedule = {
         5: 1,
@@ -104,6 +99,8 @@ def repeat_on_request_error(function: Callable, *args, **kwargs):
         2: 60,
         1: 90,
     }  # sleep variable length of time depending on retry number
+    # Patch annoying 429 message
+    logging.getLogger("tidalapi.requests").disabled = True
     for rem_attempts in range(5, 0, -1):
         try:
             return function(*args, **kwargs)
@@ -151,33 +148,14 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
                 ),
                 total=len(values) - cached,
                 desc=description,
-                unit='req',
-                
+                unit="req",
             ):
                 results[index] = result
-        except KeyboardInterrupt as ke:
-            logger.critical("Keyboard Interrupt received. Killing pool.")
+        except KeyboardInterrupt:
+            logger.critical("KeyboardInterrupt received. Killing pool.")
             process_pool.close()
-            exit(0)
+            exit(1)
     return results
-
-def run_search(function, values, description, num_processes, **kwargs):
-    results = len(values) * [None]
-
-    with concurrent.futures.ThreadPoolExecutor(num_processes) as executor:
-        futures = executor.map(
-            partial(_enumerate_wrapper, function=function, **kwargs),
-            enumerate(values),
-        )
-        for idx, res in tqdm(
-            futures,
-            total=len(values),
-            desc=description,
-            unit='req'
-        ):
-            results[idx] = res
-    return results
-
 
 
 def get_tracks_from_spotify_playlist(
@@ -205,7 +183,9 @@ class TidalPlaylistCache:
         """check if the given spotify track was already in the tidal playlist."""
         return next(filter(lambda x: match(x, spotify_track), self._data), None)
 
-    def search(self, spotify_session: spotipy.Spotify, spotify_playlist) -> Tuple[List[Tuple[SpotifyTrack, TidalTrack|None]], int]:
+    def search(
+        self, spotify_session: spotipy.Spotify, spotify_playlist
+    ) -> Tuple[List[Tuple[SpotifyTrack, TidalTrack | None]], int]:
         """Add the cached tidal track where applicable to a list of spotify tracks"""
         results = []
         cache_hits = 0
@@ -236,8 +216,8 @@ def sync_playlist(
     spotify_session: SpotifySession,
     tidal_session: TidalSession,
     spotify_id: SpotifyID,
-    tidal_id: TidalID,
     config,
+    tidal_id: Optional[TidalID] = None,
 ):
     try:
         spotify_playlist = spotify_session.playlist(spotify_id)
@@ -301,7 +281,7 @@ def sync_playlist(
                 ",".join(map(lambda x: x["name"], spotify_track["artists"])),
                 spotify_track["name"],
             )
-    logger.warn('Could not find %d tracks in Tidal', missing_tracks)
+    logger.warn("Could not find %d tracks in Tidal", missing_tracks)
 
     if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
@@ -310,27 +290,34 @@ def sync_playlist(
         print("No changes to write to Tidal playlist")
 
 
-def update_tidal_playlist(playlist: TidalPlaylist, track_ids: List[TidalID], *, chunk_size: int=20) -> None:
+def update_tidal_playlist(
+    playlist: TidalPlaylist, track_ids: List[TidalID], *, chunk_size: int = 20
+) -> None:
     offset = 0
-    with tqdm(desc="Erasing existing tracks from Tidal playlist", total=playlist.num_tracks) as progress:
+    with tqdm(
+        desc="Erasing existing tracks from Tidal playlist", total=playlist.num_tracks
+    ) as progress:
         while playlist.num_tracks:
-            indices = range(offset, min(playlist.num_tracks, chunk_size+offset))
+            indices = range(offset, min(playlist.num_tracks, chunk_size + offset))
             try:
                 print(playlist._etag)
                 playlist.remove_by_indices(indices)
                 offset += chunk_size
             except:
                 logger.info("412 hit, sleeping for a bit.")
-                time.sleep(.5)
+                time.sleep(0.5)
                 continue
             progress.update(len(indices))
-    with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
+    with tqdm(
+        desc="Adding new tracks to Tidal playlist", total=len(track_ids)
+    ) as progress:
         offset = 0
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
+            playlist.add(track_ids[offset : offset + chunk_size])
             offset += count
             progress.update(count)
+
 
 def sync_list(
     spotify_session: spotipy.Spotify,
@@ -342,7 +329,7 @@ def sync_list(
     for spotify_id, tidal_id in playlists:
         # sync the spotify playlist to tidal
         repeat_on_request_error(
-            sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config
+            sync_playlist, spotify_session, tidal_session, spotify_id, config, tidal_id
         )
         results.append(tidal_id)
     return results
