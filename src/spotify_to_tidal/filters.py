@@ -62,11 +62,9 @@ def artist_match(tidal_track: TidalTrack, spotify_track: SpotifyTrack) -> bool:
     def split_and_clean(artist: str) -> List[str]:
         return map(lambda x: x.strip().casefold(), split_artist_name(artist))
     spotify_artists = set(chain.from_iterable(map(lambda x: split_and_clean(x['name']), spotify_track['artists'])))
-    print(spotify_artists)
     spotify_artists_normalized = set(map(normalize, spotify_artists))
     tidal_artists = chain(map(lambda x: x.name, tidal_track.artists))
     tidal_artists = set(chain.from_iterable(map(split_and_clean, tidal_artists)))
-    print(tidal_artists)
     tidal_artists_normalized = set(map(normalize, tidal_artists))
 
     return tidal_artists.intersection(spotify_artists) or tidal_artists_normalized.intersection(spotify_artists_normalized)

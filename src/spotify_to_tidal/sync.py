@@ -20,15 +20,15 @@ from tqdm import tqdm
 import traceback
 
 from tqdm.contrib.concurrent import process_map
-from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 
 logger = logging.getLogger(__name__)
 
 def tidal_search(spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None], tidal_session: TidalSession) -> TidalTrack:
     # Patch annoying 429 message
-    logging.getLogger('tidalapi').addFilter(Filter429('tidalapi.*'))
-    logging.getLogger('tidalapi.requests').addFilter(Filter429('tidalapi.requests'))
-    # logging.getLogger('tidalapi.requests').disabled = True
+    # logging.getLogger('tidalapi').addFilter(Filter429('tidalapi.*'))
+    # logging.getLogger('tidalapi.requests').addFilter(Filter429('tidalapi.requests'))
+    logging.getLogger('tidalapi.requests').disabled = True
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
         logger.debug("Found %s in cache.", spotify_track['name'])
@@ -46,7 +46,7 @@ def tidal_search(spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None]
                 + simple(spotify_track["album"]["name"].casefold()),
                 models=[tidalapi.album.Album],
             )
-            logger.debug("Looking for album %s in Tidal" % spotify_track['album'])
+            logger.debug("Looking for album %s in Tidal" % spotify_track['album']['name'])
             for album in album_result["albums"]:
                 album_tracks = album.tracks()
                 if len(album_tracks) >= spotify_track["track_number"]:
@@ -136,17 +136,48 @@ def _enumerate_wrapper(value_tuple: Tuple, function: Callable, **kwargs) -> List
 
 def call_async_with_progress(function, values, description, num_processes, **kwargs):
     results = len(values) * [None]
+    cached = 0
+    cached_results = filter(lambda x: x[1][1] is not None, enumerate(values))
+    for idx, res in cached_results:
+        results[idx] = res[1]
+        cached += 1
+    to_search = filter(lambda x: x[1][1] is None, enumerate(values))
     with Pool(processes=num_processes) as process_pool:
-        for index, result in tqdm(
-            process_pool.imap_unordered(
-                partial(_enumerate_wrapper, function=function, **kwargs),
-                enumerate(values),
-            ),
+        try:
+            for index, result in tqdm(
+                process_pool.imap_unordered(
+                    partial(_enumerate_wrapper, function=function, **kwargs),
+                    to_search,
+                ),
+                total=len(values) - cached,
+                desc=description,
+                unit='req',
+                
+            ):
+                results[index] = result
+        except KeyboardInterrupt as ke:
+            logger.critical("Keyboard Interrupt received. Killing pool.")
+            process_pool.close()
+            exit(0)
+    return results
+
+def run_search(function, values, description, num_processes, **kwargs):
+    results = len(values) * [None]
+
+    with concurrent.futures.ThreadPoolExecutor(num_processes) as executor:
+        futures = executor.map(
+            partial(_enumerate_wrapper, function=function, **kwargs),
+            enumerate(values),
+        )
+        for idx, res in tqdm(
+            futures,
             total=len(values),
             desc=description,
+            unit='req'
         ):
-            results[index] = result
+            results[idx] = res
     return results
+
 
 
 def get_tracks_from_spotify_playlist(
@@ -252,7 +283,7 @@ def sync_playlist(
         tidal_search,
         spotify_tracks,
         task_description,
-        config.get("subprocesses", 1),
+        config.get("subprocesses", 25),
         tidal_session=tidal_session,
     )
 
@@ -274,6 +305,7 @@ def sync_playlist(
 
     if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
+        print("Synced playlist.")
     else:
         print("No changes to write to Tidal playlist")
 
