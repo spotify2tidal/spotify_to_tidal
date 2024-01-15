@@ -4,11 +4,10 @@ import logging
 import sys
 import time
 import traceback
-import typing
 
 from functools import partial
 from multiprocessing import Pool
-from typing import Any, Dict, List, Tuple, Callable, Optional
+from typing import Any, List, Tuple, Callable, Optional, Set
 
 import requests
 import spotipy
@@ -81,15 +80,6 @@ def tidal_search(
     return res
 
 
-def get_tidal_playlists_dict(tidal_session: TidalSession) -> Dict[str, TidalPlaylist]:
-    # a dictionary of name --> playlist
-    tidal_playlists = tidal_session.user.playlists()
-    output = {}
-    for playlist in tidal_playlists:
-        output[playlist.name] = playlist
-    return output
-
-
 def repeat_on_request_error(function: Callable, *args, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     sleep_schedule = {
@@ -134,10 +124,12 @@ def _enumerate_wrapper(value_tuple: Tuple, function: Callable, **kwargs) -> List
 def call_async_with_progress(function, values, description, num_processes, **kwargs):
     results = len(values) * [None]
     cached = 0
+    # Add the known results to the existing return var
     cached_results = filter(lambda x: x[1][1] is not None, enumerate(values))
     for idx, res in cached_results:
         results[idx] = res[1]
         cached += 1
+    # Only search for non-cached songs
     to_search = filter(lambda x: x[1][1] is None, enumerate(values))
     with Pool(processes=num_processes) as process_pool:
         try:
@@ -160,7 +152,7 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
 
 def get_tracks_from_spotify_playlist(
     spotify_session: SpotifySession, spotify_playlist
-) -> typing.List[SpotifyTrack]:
+) -> List[SpotifyTrack]:
     output = []
     results: List[SpotifyTrack] = spotify_session.playlist_tracks(
         spotify_playlist["id"],
@@ -176,8 +168,16 @@ def get_tracks_from_spotify_playlist(
 
 
 class TidalPlaylistCache:
-    def __init__(self, playlist: TidalPlaylist):
-        self._data: List[TidalTrack] = playlist.tracks()
+    _existing: Any | None = None
+    _data: Set[TidalTrack] = set()
+
+    def __new__(cls, playlist: TidalPlaylist):
+        if cls._existing is None:
+            cls._existing = super().__new__(cls)
+            cls._data = set()
+
+        cls._data.update(playlist.tracks())
+        return cls._existing
 
     def _search(self, spotify_track: SpotifyTrack) -> TidalTrack | None:
         """check if the given spotify track was already in the tidal playlist."""
@@ -282,7 +282,6 @@ def sync_playlist(
                 spotify_track["name"],
             )
     logger.warn("Could not find %d tracks in Tidal", missing_tracks)
-
     if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
         print("Synced playlist.")
@@ -333,58 +332,3 @@ def sync_list(
         )
         results.append(tidal_id)
     return results
-
-
-def pick_tidal_playlist_for_spotify_playlist(
-    spotify_playlist: Dict[str, Any], tidal_playlists: Dict[str, TidalPlaylist]
-) -> Tuple[SpotifyID, TidalID | None]:
-    if spotify_playlist["name"] in tidal_playlists:
-        # if there's an existing tidal playlist with the name of the current playlist then use that
-        tidal_playlist = tidal_playlists[spotify_playlist["name"]]
-        return (spotify_playlist["id"], tidal_playlist.id)
-    else:
-        return (spotify_playlist["id"], None)
-
-
-def get_user_playlist_mappings(
-    spotify_session: SpotifySession, tidal_session: TidalSession, config: SyncConfig
-) -> List[Tuple[SpotifyID, TidalID | None]]:
-    results = []
-    spotify_playlists = get_playlists_from_spotify(spotify_session, config)
-    tidal_playlists = get_tidal_playlists_dict(tidal_session)
-    for spotify_playlist in spotify_playlists:
-        results.append(
-            pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
-        )
-    return results
-
-
-def get_playlists_from_spotify(spotify_session: SpotifySession, config: SyncConfig):
-    # get all the user playlists from the Spotify account
-    playlists = []
-    spotify_results = spotify_session.user_playlists(config["spotify"]["username"])
-    exclude_list = set(map(str.split(":")[-1], config.get("excluded_playlists", [])))
-    while True:
-        for spotify_playlist in spotify_results["items"]:
-            if (
-                spotify_playlist["owner"]["id"] == config["spotify"]["username"]
-                and not spotify_playlist["id"] in exclude_list
-            ):
-                playlists.append(spotify_playlist)
-        # move to the next page of results if there are still playlists remaining
-        if spotify_results["next"]:
-            spotify_results = spotify_session.next(spotify_results)
-        else:
-            break
-    return playlists
-
-
-def get_playlists_from_config(
-    config: SyncConfig,
-) -> typing.List[typing.Tuple[SpotifyID, TidalID]]:
-    # get the list of playlist sync mappings from the configuration file
-    return list(
-        map(
-            lambda x: (x["spotify_id"], x["tidal_id"]), config.get("sync_playlists", [])
-        )
-    )

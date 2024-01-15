@@ -5,14 +5,13 @@ import yaml
 from pathlib import Path
 from .filters import Filter429, FilterOtherPkgs
 from .auth import open_tidal_session, open_spotify_session
-from .sync import sync_list
-from .sync import (
+from .parse import (
     get_tidal_playlists_dict,
-    pick_tidal_playlist_for_spotify_playlist,
+    playlist_id_tuple,
     get_playlists_from_config,
-    get_user_playlist_mappings,
-    get_playlists_from_spotify,
+    create_playlist_id_tuple,
 )
+from .sync import sync_list
 from .type import SyncConfig, SpotifyConfig
 
 from typing import NoReturn
@@ -39,7 +38,12 @@ Syncs spotify playlists to Tidal. Can specify a config yaml or specify Spotify O
         "-s", "--secret", type=str, help="Spotify client secret", dest="client_secret"
     )
     parser.add_argument(
-        "-U", "--username", type=str, help="Spotify username", dest="spotify_uname"
+        "-U",
+        "--username",
+        type=str,
+        help="Spotify username of the Oauth creds",
+        dest="spotify_uname",
+        default=None,
     )
     parser.add_argument(
         "-u",
@@ -61,6 +65,14 @@ Syncs spotify playlists to Tidal. Can specify a config yaml or specify Spotify O
         action="store_true",
         default=False,
         dest="all_playlists",
+    )
+    parser.add_argument(
+        "-e",
+        "--exclude",
+        help="ID of Spotify playlists to exclude",
+        nargs="*",
+        dest="exclude_ids",
+        type=set,
     )
 
     return parser
@@ -109,6 +121,8 @@ def parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace | NoReturn
         raise RuntimeError(
             "Config specfied with config attributes. Only specify a config or all attributes."
         )
+    if args.exclude_ids is None:
+        args.exclude_ids = set()
     # TODO: more validation?
     return args
 
@@ -119,58 +133,43 @@ def main():
     if args.config:
         with open(args.config, "r") as f:
             config: SyncConfig = yaml.safe_load(f)
-            spt_cfg: SpotifyConfig = config['spotify']
+        args.exclude_ids.update(*config.get("excluded_playlists", []))
+        spotify_cfg: SpotifyConfig = config.get("spotify", {})
+        args.spotify_uname = spotify_cfg.get("username")
+        args.client_secret = spotify_cfg.get("client_secret")
+        args.client_id = spotify_cfg.get("client_id")
+        args.username = spotify_cfg.get("username")
+        redirect_uri = spotify_cfg.get("redirect_uri", "http://localhost:8888/callback")
     else:
-        spt_cfg: SpotifyConfig = {
-            'client_id': args.client_id,
-            'client_secret': args.client_secret,
-            'username': args.spotify_uname,
-            'redirect_uri': 'http://localhost:8888/callback',
-        }
-    spotify_session = open_spotify_session(spt_cfg)
+        args.config = {}
+        redirect_uri = "http://localhost:8888/callback"
+    spotify_session = open_spotify_session(
+        username=args.username,
+        client_id=args.client_id,
+        client_secret=args.client_secret,
+        redirect_uri=redirect_uri,
+    )
     tidal_session = open_tidal_session()
-    if not tidal_session.check_login():
-        logging.critical("Could not connect to Tidal")
-        sys.exit(1)
+    tidal_playlists = get_tidal_playlists_dict(tidal_session)
+    id_tuples = []
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
         spotify_playlist = spotify_session.playlist(args.uri)
-        tidal_playlists = get_tidal_playlists_dict(tidal_session)
-        tidal_playlist = pick_tidal_playlist_for_spotify_playlist(
-            spotify_playlist, tidal_playlists
+        id_tuples.append(playlist_id_tuple(spotify_playlist, tidal_playlists))
+        sync_list(spotify_session, tidal_session, [id_tuple], config)
+    elif args.config and (x := config.get("sync_playlists", [])):
+        for ids in x:
+            id_tuples.append((ids["spotify_id"], ids.get("tidal_id")))
+    elif args.all_playlists or config.get("sync_playlists", None):
+        id_tuple = create_playlist_id_tuple(
+            spotify_session, tidal_session, args.exclude_ids
         )
-        sync_list(spotify_session, tidal_session, [tidal_playlist], config)
+        # sync_list(spotify_session, tidal_session, id_map, config)
+    logger.info("Syncing %d playlists", len(id_tuples))
 
-    elif args.all_playlists:
-        playlists = []
-        cursor = spotify_session.current_user_playlists()
-        while True:
-            playlists.extend(cursor["items"])
-            if not cursor["next"]:
-                break
-            cursor = spotify_session.next(cursor)
-
-        tidal_playlists = {p.name: p for p in tidal_session.user.playlists()}
-        id_map = []
-        for sp_playlist in playlists:
-            # Check if playlist exists
-            if (p_name := sp_playlist["name"]) in tidal_playlists:
-                tid = tidal_playlists[p_name].id
-            else:
-                tid = None
-                id_map.append((sp_playlist["id"], tid))
-        logger.info("Syncing %d playlists", len(id_map))
-        sync_list(spotify_session, tidal_session, id_map, config)
-    elif config.get("sync_playlists", None):
-        # if the config contains a sync_playlists list of mappings then use that
-        sync_list(
-            spotify_session, tidal_session, get_playlists_from_config(config), config
-        )
-    else:
-        # otherwise just use the user playlists in the Spotify account
-        sync_list(
-            spotify_session,
-            tidal_session,
-            get_user_playlist_mappings(spotify_session, tidal_session, config),
-            config,
-        )
+    sync_list(
+        spotify_session,
+        tidal_session,
+        id_tuples,
+        config,
+    )

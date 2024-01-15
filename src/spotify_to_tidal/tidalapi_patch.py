@@ -16,7 +16,7 @@ def _remove_indices_from_playlist(playlist: TidalPlaylist, indices) -> None:
 
 def clear_tidal_playlist(playlist: TidalPlaylist, chunk_size=20) -> None:
     with tqdm(
-        desc="Erasing existing tracks from Tidal playlist", total=playlist.num_tracks
+        desc="Erasing existing tracks from Tidal playlist", total=playlist.num_tracks, unit='req'
     ) as progress:
         while playlist.num_tracks:
             indices = range(min(playlist.num_tracks, chunk_size))
@@ -29,7 +29,7 @@ def add_multiple_tracks_to_playlist(
 ) -> None:
     offset = 0
     with tqdm(
-        desc="Adding new tracks to Tidal playlist", total=len(track_ids)
+        desc="Adding new tracks to Tidal playlist", total=len(track_ids), unit='req'
     ) as progress:
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)

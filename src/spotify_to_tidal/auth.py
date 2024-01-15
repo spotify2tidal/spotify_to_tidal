@@ -12,20 +12,22 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def open_spotify_session(config: SpotifyConfig) -> Union[spotipy.Spotify, NoReturn]:
+def open_spotify_session(
+    *, username: str, client_id: str, client_secret: str, redirect_uri: str
+) -> Union[spotipy.Spotify, NoReturn]:
     credentials_manager = spotipy.SpotifyOAuth(
-        username=config["username"],
+        username=username,
         scope="playlist-read-private",
-        client_id=config["client_id"],
-        client_secret=config["client_secret"],
-        redirect_uri=config["redirect_uri"],
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
     )
     try:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
         logger.critical(
             "Error opening Spotify sesion; could not get token for username: %s",
-            config["username"],
+            username,
         )
         sys.exit(1)
 
@@ -55,6 +57,10 @@ def open_tidal_session(config: Optional[tidalapi.Config] = None) -> tidalapi.Ses
             logger.warn("Error loading previous Tidal Session")
             logger.debug(e)
 
+    if not session.check_login():
+        logging.critical("Could not connect to Tidal")
+        sys.exit(1)
+
     login, future = session.login_oauth()
     print("Login with the webbrowser: " + login.verification_uri_complete)
     url = login.verification_uri_complete
@@ -62,6 +68,10 @@ def open_tidal_session(config: Optional[tidalapi.Config] = None) -> tidalapi.Ses
         url = "https://" + url
     webbrowser.open(url)
     future.result()
+
+    if not session.check_login():
+        logging.critical("Could not connect to Tidal")
+        sys.exit(1)
     with open(".session.yml", "w") as f:
         yaml.dump(
             {
