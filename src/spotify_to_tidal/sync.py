@@ -13,6 +13,8 @@ import requests
 import spotipy
 import tidalapi
 import tidalapi.playlist
+
+from cachetools import cached, TTLCache
 from tqdm import tqdm
 
 from .type import *
@@ -23,12 +25,29 @@ from .filters import *
 logger = logging.getLogger(__name__)
 
 
+@cached(TTLCache(maxsize=1024, ttl=600))
+def _query_tidal(tidal_session: TidalSession, q: str, model):
+    return tidal_session.search(q, models=[model])
+
+
+@cached(TTLCache(maxsize=1024, ttl=600))
+def query_tidal_album(tidal_session: TidalSession, artist: str, album: str):
+    artist = simple(artist.casefold())
+    album = simple(album.casefold())
+    return _query_tidal(tidal_session, artist+" "+album, tidalapi.Album)
+
+
+@cached(TTLCache(maxsize=1024, ttl=600))
+def query_tidal_track(tidal_session: TidalSession, artist: str, track: str):
+    artist = simple(artist.casefold())
+    track = simple(track.casefold())
+    return _query_tidal(tidal_session, artist+" "+track, tidalapi.Track)
+
+
 def tidal_search(
     spotify_track_and_cache: Tuple[SpotifyTrack, TidalTrack | None],
     tidal_session: TidalSession,
 ) -> TidalTrack:
-    # Patch annoying 429 message
-    logging.root.addFilter(Filter429('tidalapi'))
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
         logger.debug("Found %s in cache.", spotify_track["name"])
@@ -40,12 +59,10 @@ def tidal_search(
         and len(spotify_track["album"]["artists"])
     ):
         for artist in spotify_track["album"]["artists"]:
-            album_result = tidal_session.search(
-                simple(artist["name"].casefold())
-                + " "
-                + simple(spotify_track["album"]["name"].casefold()),
-                models=[tidalapi.album.Album],
-            )
+            artist_name = artist["name"]
+            album_name = spotify_track["album"]["name"]
+            album_result = query_tidal_album(tidal_session, artist_name, album_name)
+
             logger.debug(
                 "Looking for album %s in Tidal" % spotify_track["album"]["name"]
             )
@@ -62,14 +79,11 @@ def tidal_search(
         % spotify_track["name"]
     )
     logger.debug("Searching spotify for %s", spotify_track["name"])
-    spotify_track_name = spotify_track["name"].casefold()
-    logger.debug("Normalized track name: %s", spotify_track_name)
+    spotify_track_name = spotify_track["name"]
     for artist in spotify_track["artists"]:
-        artist_name = artist["name"].casefold()
-        search_res = tidal_session.search(
-            artist_name + " " + spotify_track_name,
-            models=[tidalapi.media.Track],
-        )
+        query_tidal_track(tidal_session, artist["name"], spotify_track_name)
+        artist_name = artist["name"]
+        search_res  = query_tidal_track(tidal_session, artist=artist_name, track=spotify_track_name)
         res: TidalTrack | None = next(
             (x for x in search_res["tracks"] if match(x, spotify_track)), None
         )
@@ -82,6 +96,7 @@ def tidal_search(
 
 def repeat_on_request_error(function: Callable, *args, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
+    logging.root.addFilter(Filter429('tidalapi'))
     sleep_schedule = {
         5: 1,
         4: 10,
@@ -116,6 +131,7 @@ def repeat_on_request_error(function: Callable, *args, **kwargs):
 def _enumerate_wrapper(value_tuple: Tuple, function: Callable, **kwargs) -> List:
     # just a wrapper which accepts a tuple from enumerate and returns the index back as the first argument
     index, value = value_tuple
+    logging.root.addFilter(Filter429('tidalapi'))
     return (index, repeat_on_request_error(function, value, **kwargs))
 
 
