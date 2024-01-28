@@ -3,12 +3,11 @@ import argparse
 import sys
 import yaml
 from pathlib import Path
-from .filters import Filter429, FilterOtherPkgs
+from .filters import Filter429
 from .auth import open_tidal_session, open_spotify_session
 from .parse import (
     get_tidal_playlists_dict,
     playlist_id_tuple,
-    get_playlists_from_config,
     create_playlist_id_tuple,
 )
 from .sync import sync_list
@@ -48,7 +47,8 @@ Syncs spotify playlists to Tidal. Can specify a config yaml or specify Spotify O
     parser.add_argument(
         "-u",
         "--uri",
-        help="Synchronize a specific URI instead of the one in the config",
+        help="Synchronize specific URI(s) instead of the one in the config",
+        nargs='*',
         dest="uri",
     )
     parser.add_argument(
@@ -84,9 +84,8 @@ logger = None
 def setup_logging(verbosity: int) -> None:
     log_map = [logging.WARNING, logging.INFO, logging.DEBUG]
     strm_hndl = logging.StreamHandler(sys.stdout)
-    strm_hndl.addFilter(Filter429("tidalapi"))
-    strm_hndl.addFilter(Filter429("tidalapi.*"))
-    strm_hndl.addFilter(Filter429("spotipy"))
+    logging.root.addFilter(Filter429("tidalapi"))
+    logging.root.addFilter(Filter429("spotipy"))
     global logger
     fmt = logging.Formatter(
         "[%(asctime)s] %(levelname)s %(module)s:%(funcName)s:%(lineno)d - %(message)s"
@@ -154,14 +153,14 @@ def main():
     id_tuples = []
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
-        spotify_playlist = spotify_session.playlist(args.uri)
-        id_tuples.append(playlist_id_tuple(spotify_playlist, tidal_playlists))
-        sync_list(spotify_session, tidal_session, [id_tuple], config)
+        for uri in args.uri:
+            spotify_playlist = spotify_session.playlist(uri)
+            id_tuples.append(playlist_id_tuple(spotify_playlist, tidal_playlists))
     elif args.config and (x := config.get("sync_playlists", [])):
         for ids in x:
             id_tuples.append((ids["spotify_id"], ids.get("tidal_id")))
     elif args.all_playlists or config.get("sync_playlists", None):
-        id_tuple = create_playlist_id_tuple(
+        id_tuples = create_playlist_id_tuple(
             spotify_session, tidal_session, args.exclude_ids
         )
         # sync_list(spotify_session, tidal_session, id_map, config)

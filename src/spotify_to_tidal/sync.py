@@ -28,7 +28,7 @@ def tidal_search(
     tidal_session: TidalSession,
 ) -> TidalTrack:
     # Patch annoying 429 message
-    logging.getLogger("tidalapi.requests").disabled = True
+    logging.root.addFilter(Filter429('tidalapi'))
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
         logger.debug("Found %s in cache.", spotify_track["name"])
@@ -89,8 +89,6 @@ def repeat_on_request_error(function: Callable, *args, **kwargs):
         2: 60,
         1: 90,
     }  # sleep variable length of time depending on retry number
-    # Patch annoying 429 message
-    logging.getLogger("tidalapi.requests").disabled = True
     for rem_attempts in range(5, 0, -1):
         try:
             return function(*args, **kwargs)

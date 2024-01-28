@@ -39,5 +39,6 @@ def add_multiple_tracks_to_playlist(
 
 
 def set_tidal_playlist(playlist: TidalPlaylist, track_ids: List[TidalID]) -> None:
-    clear_tidal_playlist(playlist)
+    if playlist.num_tracks != 0:
+        clear_tidal_playlist(playlist)
     add_multiple_tracks_to_playlist(playlist, track_ids)
