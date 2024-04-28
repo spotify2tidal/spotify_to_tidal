@@ -238,22 +238,24 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
     spotify_tracks, cache_hits = TidalPlaylistCache(tidal_playlist).search(spotify_session, spotify_playlist)
     if cache_hits == len(spotify_tracks):
         print("No new tracks to search in Spotify playlist '{}'".format(spotify_playlist['name']))
+        print("\033[2J\033[H", end="", flush=True)
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 10), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
             tidal_track_ids.append(tidal_track.id)
         else:
             color = ('\033[91m', '\033[0m')
-            print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
+            print("\033[2J\033[H", end="", flush=True)
 
     if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
     else:
         print("No changes to write to Tidal playlist")
+        print("\033[2J\033[H", end="", flush=True)
 
 def sync_list(spotify_session, tidal_session, playlists, config):
     results = []
@@ -673,8 +675,9 @@ def main():
         # otherwise just use the user playlists in the Spotify account
         sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session, config), config)
 
-    # Terminate the process after completion
+    print("all done!")
     os._exit(0)
+
 
 if __name__ == '__main__':
     main()
