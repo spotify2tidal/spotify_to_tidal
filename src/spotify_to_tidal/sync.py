@@ -304,11 +304,11 @@ def sync_playlist(
                 spotify_track["name"],
             )
     logger.warn("Could not find %d tracks in Tidal", missing_tracks)
-    # if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
-    #     set_tidal_playlist(tidal_playlist, tidal_track_ids)
-    #     print("Synced playlist.")
-    # else:
-    #     print("No changes to write to Tidal playlist")
+    if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
+        set_tidal_playlist(tidal_playlist, tidal_track_ids)
+        print("Synced playlist.")
+    else:
+        print("No changes to write to Tidal playlist")
 
 
 def update_tidal_playlist(
