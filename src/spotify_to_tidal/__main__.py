@@ -4,14 +4,14 @@ import sys
 import yaml
 from pathlib import Path
 from .filters import Filter429
-from .auth import open_tidal_session, open_spotify_session
-from .parse import (
+from . import (
+    open_tidal_session, open_spotify_session,
     get_tidal_playlists_dict,
     playlist_id_tuple,
+    sync_list,
     create_playlist_id_tuple,
+    SyncConfig, SpotifyConfig,
 )
-from .sync import sync_list
-from .type import SyncConfig, SpotifyConfig
 
 from typing import NoReturn
 
@@ -163,7 +163,7 @@ def main():
         id_tuples = create_playlist_id_tuple(
             spotify_session, tidal_session, args.exclude_ids
         )
-        # sync_list(spotify_session, tidal_session, id_map, config)
+        sync_list(spotify_session, tidal_session, id_map, config)
     logger.info("Syncing %d playlists", len(id_tuples))
 
     sync_list(

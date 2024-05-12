@@ -5,8 +5,9 @@ import sys
 import time
 import traceback
 
+from asyncio import Future
 from functools import partial
-from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, List, Tuple, Callable, Optional, Set
 
 import requests
@@ -22,7 +23,7 @@ from .tidalapi_patch import set_tidal_playlist
 from .filters import *
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__package__)
 
 
 @cached(TTLCache(maxsize=1024, ttl=600))
@@ -51,6 +52,7 @@ def tidal_search(
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track:
         logger.debug("Found %s in cache.", spotify_track["name"])
+        logger.handlers[0].flush()
         return cached_tidal_track
     # search for album name and first album artist
     if (
@@ -66,6 +68,7 @@ def tidal_search(
             logger.debug(
                 "Looking for album %s in Tidal" % spotify_track["album"]["name"]
             )
+            logger.handlers[0].flush()
             for album in album_result["albums"]:
                 album_tracks = album.tracks()
                 if len(album_tracks) >= spotify_track["track_number"]:
@@ -78,7 +81,9 @@ def tidal_search(
         "Did not find track %s in any artist albums, running general search."
         % spotify_track["name"]
     )
+    logger.handlers[0].flush()
     logger.debug("Searching spotify for %s", spotify_track["name"])
+    logger.handlers[0].flush()
     spotify_track_name = spotify_track["name"]
     for artist in spotify_track["artists"]:
         query_tidal_track(tidal_session, artist["name"], spotify_track_name)
@@ -89,8 +94,10 @@ def tidal_search(
         )
         if res:
             logger.info("Found song %s in Tidal!", spotify_track["name"])
+            logger.handlers[0].flush()
             return res
     logger.info("Could not find song %s" % spotify_track["name"])
+    logger.handlers[0].flush()
     return res
 
 
@@ -145,21 +152,21 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
         cached += 1
     # Only search for non-cached songs
     to_search = filter(lambda x: x[1][1] is None, enumerate(values))
-    with Pool(processes=num_processes) as process_pool:
+    with ThreadPoolExecutor(max_workers=num_processes) as process_pool:
         try:
+            futures: List[Future] = []
+            for s in to_search:
+                futures.append(process_pool.submit(_enumerate_wrapper, value_tuple=s, function=function, **kwargs))
             for index, result in tqdm(
-                process_pool.imap_unordered(
-                    partial(_enumerate_wrapper, function=function, **kwargs),
-                    to_search,
-                ),
-                total=len(values) - cached,
+                map(lambda x: x.result(), as_completed(futures)),
+                total=len(futures),
                 desc=description,
                 unit="req",
             ):
                 results[index] = result
         except KeyboardInterrupt:
             logger.critical("KeyboardInterrupt received. Killing pool.")
-            process_pool.close()
+            process_pool.shutdown(cancel_futures=True)
             exit(1)
     return results
 
@@ -184,6 +191,7 @@ def get_tracks_from_spotify_playlist(
 class TidalPlaylistCache:
     _existing: Any | None = None
     _data: Set[TidalTrack] = set()
+    __slots__ = ('_existing', '_data')
 
     def __new__(cls, playlist: TidalPlaylist):
         if cls._existing is None:
@@ -296,11 +304,11 @@ def sync_playlist(
                 spotify_track["name"],
             )
     logger.warn("Could not find %d tracks in Tidal", missing_tracks)
-    if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
-        set_tidal_playlist(tidal_playlist, tidal_track_ids)
-        print("Synced playlist.")
-    else:
-        print("No changes to write to Tidal playlist")
+    # if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
+    #     set_tidal_playlist(tidal_playlist, tidal_track_ids)
+    #     print("Synced playlist.")
+    # else:
+    #     print("No changes to write to Tidal playlist")
 
 
 def update_tidal_playlist(
