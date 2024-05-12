@@ -1,38 +1,39 @@
 #!/usr/bin/env python3
 
-import argparse
-from auth import open_tidal_session, open_spotify_session
 from functools import partial
+from typing import Sequence, Set, Mapping
 from multiprocessing import Pool
 import requests
 import sys
 import spotipy
 import tidalapi
-from tidalapi_patch import set_tidal_playlist
+from .tidalapi_patch import set_tidal_playlist
 import time
 from tqdm import tqdm
 import traceback
 import unicodedata
-import yaml
 
-def normalize(s):
+from .type import spotify as t_spotify
+
+
+def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
-def simple(input_string):
+def simple(input_string: str) -> str:
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
-def isrc_match(tidal_track, spotify_track):
+def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
     if "isrc" in spotify_track["external_ids"]:
         return tidal_track.isrc == spotify_track["external_ids"]["isrc"]
     return False
 
-def duration_match(tidal_track, spotify_track, tolerance=2):
+def duration_match(tidal_track: tidalapi.Track, spotify_track, tolerance=2) -> float:
     # the duration of the two tracks must be the same to within 2 seconds
     return abs(tidal_track.duration - spotify_track['duration_ms']/1000) < tolerance
 
-def name_match(tidal_track, spotify_track):
-    def exclusion_rule(pattern, tidal_track, spotify_track):
+def name_match(tidal_track, spotify_track) -> bool:
+    def exclusion_rule(pattern: str, tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack):
         spotify_has_pattern = pattern in spotify_track['name'].lower()
         tidal_has_pattern = pattern in tidal_track.name.lower() or (not tidal_track.version is None and (pattern in tidal_track.version.lower()))
         return spotify_has_pattern != tidal_has_pattern
@@ -47,8 +48,8 @@ def name_match(tidal_track, spotify_track):
     simple_spotify_track = simple(spotify_track['name'].lower()).split('feat.')[0].strip()
     return simple_spotify_track in tidal_track.name.lower() or normalize(simple_spotify_track) in normalize(tidal_track.name.lower())
 
-def artist_match(tidal_track, spotify_track):
-    def split_artist_name(artist):
+def artist_match(tidal_track: tidalapi.Track, spotify_track) -> Set[str]:
+    def split_artist_name(artist: str) -> Sequence[str]:
        if '&' in artist:
            return artist.split('&')
        elif ',' in artist:
@@ -56,7 +57,7 @@ def artist_match(tidal_track, spotify_track):
        else:
            return [artist]
 
-    def get_tidal_artists(tidal_track, do_normalize=False):
+    def get_tidal_artists(tidal_track: tidalapi.Track, do_normalize=False) -> Set[str]:
         result = []
         for artist in tidal_track.artists:
             if do_normalize:
@@ -66,7 +67,7 @@ def artist_match(tidal_track, spotify_track):
             result.extend(split_artist_name(artist_name))
         return set([simple(x.strip().lower()) for x in result])
 
-    def get_spotify_artists(spotify_track, do_normalize=False):
+    def get_spotify_artists(spotify_track: t_spotify.SpotifyTrack, do_normalize=False) -> Set[str]:
         result = []
         for artist in spotify_track['artists']:
             if do_normalize:
@@ -81,7 +82,7 @@ def artist_match(tidal_track, spotify_track):
         return True
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
 
-def match(tidal_track, spotify_track):
+def match(tidal_track, spotify_track) -> bool:
     return isrc_match(tidal_track, spotify_track) or (
         duration_match(tidal_track, spotify_track)
         and name_match(tidal_track, spotify_track)
@@ -89,7 +90,7 @@ def match(tidal_track, spotify_track):
     )
 
 
-def tidal_search(spotify_track_and_cache, tidal_session):
+def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track: return cached_tidal_track
     # search for album name and first album artist
@@ -106,7 +107,7 @@ def tidal_search(spotify_track_and_cache, tidal_session):
         if match(track, spotify_track):
             return track
 
-def get_tidal_playlists_dict(tidal_session):
+def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     # a dictionary of name --> playlist
     tidal_playlists = tidal_session.user.playlists()
     output = {}
@@ -150,7 +151,7 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
             results[index] = result
     return results
 
-def get_tracks_from_spotify_playlist(spotify_session, spotify_playlist):
+def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     output = []
     results = spotify_session.playlist_tracks(
         spotify_playlist["id"],
@@ -165,10 +166,10 @@ def get_tracks_from_spotify_playlist(spotify_session, spotify_playlist):
             return output
 
 class TidalPlaylistCache:
-    def __init__(self, playlist):
+    def __init__(self, playlist: tidalapi.Playlist):
         self._data = playlist.tracks()
 
-    def _search(self, spotify_track):
+    def _search(self, spotify_track: t_spotify.SpotifyTrack):
         ''' check if the given spotify track was already in the tidal playlist.'''
         results = []
         for tidal_track in self._data:
@@ -176,7 +177,7 @@ class TidalPlaylistCache:
                 return tidal_track
         return None
 
-    def search(self, spotify_session, spotify_playlist):
+    def search(self, spotify_session: spotipy.Spotify, spotify_playlist):
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
         results = []
         cache_hits = 0
@@ -191,7 +192,7 @@ class TidalPlaylistCache:
                 results.append( (track, None) )
         return (results, cache_hits)
 
-def tidal_playlist_is_dirty(playlist, new_track_ids):
+def tidal_playlist_is_dirty(playlist: tidalapi.Playlist, new_track_ids: Sequence[str]) -> bool:
     old_tracks = playlist.tracks()
     if len(old_tracks) != len(new_track_ids):
         return True
@@ -200,13 +201,12 @@ def tidal_playlist_is_dirty(playlist, new_track_ids):
             return True
     return False
 
-def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
+def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_id: str, tidal_id: int, config):
     try:
         spotify_playlist = spotify_session.playlist(spotify_id)
     except spotipy.SpotifyException as e:
         print("Error getting Spotify playlist " + spotify_id)
         print(e)
-        results.append(None)
         return
     if tidal_id:
         # if a Tidal playlist was specified then look it up
@@ -241,7 +241,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
     else:
         print("No changes to write to Tidal playlist")
 
-def sync_list(spotify_session, tidal_session, playlists, config):
+def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists: Mapping[str, tidalapi.Playlist], config):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
@@ -249,7 +249,7 @@ def sync_list(spotify_session, tidal_session, playlists, config):
     results.append(tidal_id)
   return results
 
-def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
+def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: Mapping[str, tidalapi.Playlist]):
     if spotify_playlist['name'] in tidal_playlists:
       # if there's an existing tidal playlist with the name of the current playlist then use that
       tidal_playlist = tidal_playlists[spotify_playlist['name']]
@@ -258,7 +258,7 @@ def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
       return (spotify_playlist['id'], None)
     
 
-def get_user_playlist_mappings(spotify_session, tidal_session, config):
+def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
   results = []
   spotify_playlists = get_playlists_from_spotify(spotify_session, config)
   tidal_playlists = get_tidal_playlists_dict(tidal_session)
@@ -266,7 +266,7 @@ def get_user_playlist_mappings(spotify_session, tidal_session, config):
       results.append( pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists) )
   return results
 
-def get_playlists_from_spotify(spotify_session, config):
+def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     # get all the user playlists from the Spotify account
     playlists = []
     spotify_results = spotify_session.user_playlists(config['spotify']['username'])
@@ -285,28 +285,3 @@ def get_playlists_from_spotify(spotify_session, config):
 def get_playlists_from_config(config):
     # get the list of playlist sync mappings from the configuration file
     return [(item['spotify_id'], item['tidal_id']) for item in config['sync_playlists']]
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='config.yml', help='location of the config file')
-    parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
-    args = parser.parse_args()
-
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
-    spotify_session = open_spotify_session(config['spotify'])
-    tidal_session = open_tidal_session()
-    if not tidal_session.check_login():
-        sys.exit("Could not connect to Tidal")
-    if args.uri:
-        # if a playlist ID is explicitly provided as a command line argument then use that
-        spotify_playlist = spotify_session.playlist(args.uri)
-        tidal_playlists = get_tidal_playlists_dict(tidal_session)
-        tidal_playlist = pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
-        sync_list(spotify_session, tidal_session, [tidal_playlist], config)
-    elif config.get('sync_playlists', None):
-        # if the config contains a sync_playlists list of mappings then use that
-        sync_list(spotify_session, tidal_session, get_playlists_from_config(config), config)
-    else:
-        # otherwise just use the user playlists in the Spotify account
-        sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session, config), config)

@@ -6,7 +6,12 @@ import tidalapi
 import webbrowser
 import yaml
 
-def open_spotify_session(config):
+__all__ = [
+    'open_spotify_session',
+    'open_tidal_session'
+]
+
+def open_spotify_session(config) -> spotipy.Spotify:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
 				       scope='playlist-read-private',
 				       client_id=config['client_id'],
@@ -19,7 +24,7 @@ def open_spotify_session(config):
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
 
-def open_tidal_session(config = None):
+def open_tidal_session(config = None) -> tidalapi.Session:
     try:
         with open('.session.yml', 'r') as session_file:
             previous_session = yaml.safe_load(session_file)
