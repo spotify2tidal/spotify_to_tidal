@@ -15,7 +15,7 @@ import unicodedata
 
 from .type import spotify as t_spotify
 
-# maintain compatibility
+# maintain compatibility on 3.10, `Self` requires 3.11
 try:
     from typing import Self
 except ImportError:
