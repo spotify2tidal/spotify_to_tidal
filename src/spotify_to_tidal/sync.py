@@ -203,10 +203,9 @@ class TidalTrackCache:
 
         return cls._existing
 
-    def _search(self, spotify_track: t_spotify.SpotifyTrack) -> int:
+    def _search(self, spotify_track: t_spotify.SpotifyTrack) -> int | None:
         ''' check if the given spotify track was already in the tidal playlist.'''
-        if cache_hit:=self.data.get(spotify_track['id']):
-            return cache_hit
+        return self.data.get(spotify_track['id'])
 
     def search(self, spotify_session: spotipy.Spotify, spotify_playlist):
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
