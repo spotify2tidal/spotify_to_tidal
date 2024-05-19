@@ -15,6 +15,12 @@ import unicodedata
 
 from .type import spotify as t_spotify
 
+# maintain compatibility
+try:
+    from typing import Self
+except ImportError:
+    from typing import Any, TypeAlias
+    Self: TypeAlias = Any
 
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
@@ -166,12 +172,19 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
             return output
 
 class TidalPlaylistCache:
-    def __init__(self, playlist: tidalapi.Playlist):
-        self._data = playlist.tracks()
+    __slots__ = ()
+    _existing: Self | None = None
+    _data: Set[tidalapi.Track] = set()
+    def __new__(cls, playlist: tidalapi.Playlist):
+        if cls._existing is None:
+            cls._existing = super().__new__(cls)
+            cls._data = set()
 
-    def _search(self, spotify_track: t_spotify.SpotifyTrack):
+        cls._data.update(playlist.tracks())
+        return cls._existing
+
+    def _search(self, spotify_track: t_spotify.SpotifyTrack) -> tidalapi.Track | None:
         ''' check if the given spotify track was already in the tidal playlist.'''
-        results = []
         for tidal_track in self._data:
             if match(tidal_track, spotify_track):
                 return tidal_track
@@ -181,7 +194,6 @@ class TidalPlaylistCache:
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
         results = []
         cache_hits = 0
-        work_to_do = False
         spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
         for track in spotify_tracks:
             cached_track = self._search(track)
