@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 
 from functools import partial
-from typing import Sequence, Set, Mapping
+from typing import Sequence, Set, Mapping, List
 from multiprocessing import Pool
 import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import set_tidal_playlist
 import time
 from tqdm import tqdm
 import traceback
 import unicodedata
+from cachetools import TTLCache, cached
 
+from .search import search_tidal_albums, search_tidal_tracks
+from .tidalapi_patch import set_tidal_playlist
 from .type import spotify as t_spotify
 
 # maintain compatibility on 3.10, `Self` requires 3.11
@@ -34,11 +36,11 @@ def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
         return tidal_track.isrc == spotify_track["external_ids"]["isrc"]
     return False
 
-def duration_match(tidal_track: tidalapi.Track, spotify_track, tolerance=2) -> float:
+def duration_match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack, tolerance=2) -> float:
     # the duration of the two tracks must be the same to within 2 seconds
     return abs(tidal_track.duration - spotify_track['duration_ms']/1000) < tolerance
 
-def name_match(tidal_track, spotify_track) -> bool:
+def name_match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack) -> bool:
     def exclusion_rule(pattern: str, tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack):
         spotify_has_pattern = pattern in spotify_track['name'].lower()
         tidal_has_pattern = pattern in tidal_track.name.lower() or (not tidal_track.version is None and (pattern in tidal_track.version.lower()))
@@ -54,7 +56,7 @@ def name_match(tidal_track, spotify_track) -> bool:
     simple_spotify_track = simple(spotify_track['name'].lower()).split('feat.')[0].strip()
     return simple_spotify_track in tidal_track.name.lower() or normalize(simple_spotify_track) in normalize(tidal_track.name.lower())
 
-def artist_match(tidal_track: tidalapi.Track, spotify_track) -> Set[str]:
+def artist_match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack) -> Set[str]:
     def split_artist_name(artist: str) -> Sequence[str]:
        if '&' in artist:
            return artist.split('&')
@@ -64,7 +66,7 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> Set[str]:
            return [artist]
 
     def get_tidal_artists(tidal_track: tidalapi.Track, do_normalize=False) -> Set[str]:
-        result = []
+        result: List[str] = []
         for artist in tidal_track.artists:
             if do_normalize:
                 artist_name = normalize(artist.name)
@@ -74,7 +76,7 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> Set[str]:
         return set([simple(x.strip().lower()) for x in result])
 
     def get_spotify_artists(spotify_track: t_spotify.SpotifyTrack, do_normalize=False) -> Set[str]:
-        result = []
+        result: List[str] = []
         for artist in spotify_track['artists']:
             if do_normalize:
                 artist_name = normalize(artist['name'])
@@ -88,30 +90,48 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> Set[str]:
         return True
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
 
-def match(tidal_track, spotify_track) -> bool:
+def match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack) -> bool:
     return isrc_match(tidal_track, spotify_track) or (
         duration_match(tidal_track, spotify_track)
         and name_match(tidal_track, spotify_track)
         and artist_match(tidal_track, spotify_track)
     )
 
+# Function for caching purposes
+@cached(TTLCache(maxsize=50, ttl=300))
+def get_album_tracks(album: tidalapi.Album) -> Sequence[tidalapi.Track]:
+    return album.tracks()
 
 def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track: return cached_tidal_track
+    if cached_tidal_track:
+        return cached_tidal_track
     # search for album name and first album artist
-    if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-        album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
-        for album in album_result['albums']:
-            album_tracks = album.tracks()
-            if len(album_tracks) >= spotify_track['track_number']:
-                track = album_tracks[spotify_track['track_number'] - 1]
-                if match(track, spotify_track):
-                    return track
+    if (
+        "album" in spotify_track
+        and "artists" in spotify_track["album"]
+        and len(spotify_track["album"]["artists"])
+    ):
+        for artist in spotify_track["album"]["artists"]:
+            artist_name = artist["name"]
+            album_name = spotify_track["album"]["name"]
+            album_result = search_tidal_albums(tidal_session, artist_name, album_name)
+            for album in album_result["albums"]:
+                album_tracks = get_album_tracks(album)
+                if len(album_tracks) >= spotify_track["track_number"]:
+                    track = album_tracks[spotify_track["track_number"] - 1]
+                    if match(track, spotify_track):
+                        TidalTrackCache.data[spotify_track['id']] = track
+                        return track
     # if that fails then search for track name and first artist
-    for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
-        if match(track, spotify_track):
-            return track
+    spotify_track_name = spotify_track["name"]
+    for artist in spotify_track["artists"]:
+        artist_name = artist["name"]
+        search_res  = search_tidal_tracks(tidal_session, artist=artist_name, track=spotify_track_name)
+        res: tidalapi.Track | None = next(
+            (x for x in search_res["tracks"] if match(x, spotify_track)), None
+        )
+    return res
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     # a dictionary of name --> playlist
@@ -171,24 +191,21 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
         else:
             return output
 
-class TidalPlaylistCache:
+class TidalTrackCache:
     __slots__ = ()
     _existing: Self | None = None
-    _data: Set[tidalapi.Track] = set()
+    # Mapping of spotify ids -> tidal_ids
+    data: Mapping[str, int] = set()
     def __new__(cls, playlist: tidalapi.Playlist):
         if cls._existing is None:
             cls._existing = super().__new__(cls)
-            cls._data = set()
+            cls.data = {}
 
-        cls._data.update(playlist.tracks())
         return cls._existing
 
     def _search(self, spotify_track: t_spotify.SpotifyTrack) -> tidalapi.Track | None:
         ''' check if the given spotify track was already in the tidal playlist.'''
-        for tidal_track in self._data:
-            if match(tidal_track, spotify_track):
-                return tidal_track
-        return None
+        return self.data.get(spotify_track['id'])
 
     def search(self, spotify_session: spotipy.Spotify, spotify_playlist):
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
@@ -233,7 +250,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
     tidal_track_ids = []
-    spotify_tracks, cache_hits = TidalPlaylistCache(tidal_playlist).search(spotify_session, spotify_playlist)
+    spotify_tracks, cache_hits = TidalTrackCache(tidal_playlist).search(spotify_session, spotify_playlist)
     if cache_hits == len(spotify_tracks):
         print("No new tracks to search in Spotify playlist '{}'".format(spotify_playlist['name']))
         return
@@ -248,7 +265,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
 
-    if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids):
+    if tidal_playlist_is_dirty(tidal_playlist, tidal_track_ids) or True:
         set_tidal_playlist(tidal_playlist, tidal_track_ids)
     else:
         print("No changes to write to Tidal playlist")
