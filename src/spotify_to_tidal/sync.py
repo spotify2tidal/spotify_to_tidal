@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from functools import partial
-from typing import Sequence, Set, Mapping
+from typing import List, Sequence, Set, Mapping
 from multiprocessing import Pool
 import requests
 import sys
@@ -15,6 +15,12 @@ import unicodedata
 
 from .type import spotify as t_spotify
 
+# maintain compatibility on 3.10, `Self` requires 3.11
+try:
+    from typing import Self
+except ImportError:
+    from typing import Any, TypeAlias
+    Self: TypeAlias = Any
 
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
@@ -89,10 +95,9 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
-
 def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
-    spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track: return cached_tidal_track
+    spotify_track, cached_tidal_track_id = spotify_track_and_cache
+    if cached_tidal_track_id: return cached_tidal_track_id
     # search for album name and first album artist
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
         album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
@@ -165,23 +170,27 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
         else:
             return output
 
-class TidalPlaylistCache:
-    def __init__(self, playlist: tidalapi.Playlist):
-        self._data = playlist.tracks()
+class TidalTrackCache:
+    __slots__ = ()
+    _instance: Self | None = None
 
-    def _search(self, spotify_track: t_spotify.SpotifyTrack):
+    # Mapping of spotify ids -> tidal_ids
+    data: Mapping[str, int] = set()
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls.data = {}
+
+        return cls._instance
+
+    def _search(self, spotify_track: t_spotify.SpotifyTrack) -> int:
         ''' check if the given spotify track was already in the tidal playlist.'''
-        results = []
-        for tidal_track in self._data:
-            if match(tidal_track, spotify_track):
-                return tidal_track
-        return None
+        return self.data.get(spotify_track['id'])
 
     def search(self, spotify_session: spotipy.Spotify, spotify_playlist):
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
         results = []
         cache_hits = 0
-        work_to_do = False
         spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
         for track in spotify_tracks:
             cached_track = self._search(track)
@@ -191,6 +200,21 @@ class TidalPlaylistCache:
             else:
                 results.append( (track, None) )
         return (results, cache_hits)
+
+    def _populate(self, spotify_track: t_spotify.SpotifyTrack, tidal_tracks: List[tidalapi.Track]) -> bool:
+        for idx, tidal_track in list(enumerate(tidal_tracks)):
+            if match(tidal_track, spotify_track):
+                self.data[spotify_track['id']] = tidal_track.id
+                tidal_tracks.pop(idx)
+                return True
+        return False
+
+    def populate(self, spotify_tracks: List[t_spotify.SpotifyTrack], tidal_tracks: List[tidalapi.Track]):
+        for track in spotify_tracks:
+            if self.data.get(track['id']):
+                continue
+            self._populate(track, tidal_tracks)
+
 
 def tidal_playlist_is_dirty(playlist: tidalapi.Playlist, new_track_ids: Sequence[str]) -> bool:
     old_tracks = playlist.tracks()
@@ -220,18 +244,23 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         # create a new Tidal playlist if required
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
+
     tidal_track_ids = []
-    spotify_tracks, cache_hits = TidalPlaylistCache(tidal_playlist).search(spotify_session, spotify_playlist)
+    spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
+    track_cache = TidalTrackCache()
+    track_cache.populate(spotify_tracks, tidal_playlist.tracks())
+    spotify_tracks, cache_hits = track_cache.search(spotify_session, spotify_playlist)
+
     if cache_hits == len(spotify_tracks):
         print("No new tracks to search in Spotify playlist '{}'".format(spotify_playlist['name']))
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
     tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
-    for index, tidal_track in enumerate(tidal_tracks):
+    for index, tidal_track_id in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
-            tidal_track_ids.append(tidal_track.id)
+            tidal_track_ids.append(tidal_track_id)
         else:
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
