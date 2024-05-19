@@ -9,7 +9,7 @@ requires-python = ">= 3.10"
 
 dependencies = [
   "spotipy~=2.21",
-  "tidalapi~=0.7",
+  "tidalapi==0.7.6",
   "pyyaml~=6.0",
   "tqdm~=4.64",
 ]
