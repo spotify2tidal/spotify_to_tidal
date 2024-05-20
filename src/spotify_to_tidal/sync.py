@@ -115,6 +115,7 @@ def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> ti
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     # a dictionary of name --> playlist
+    print("Loading Tidal playlists... This may take some time.")
     tidal_playlists = tidal_session.user.playlists()
     output = {}
     for playlist in tidal_playlists:
@@ -275,17 +276,21 @@ def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: 
 def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     # get all the user playlists from the Spotify account
     playlists = []
-    spotify_results = spotify_session.user_playlists(config['spotify']['username'])
-    exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
-    while True:
-        for spotify_playlist in spotify_results['items']:
-            if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
-                playlists.append(spotify_playlist)
-        # move to the next page of results if there are still playlists remaining
-        if spotify_results['next']:
-            spotify_results = spotify_session.next(spotify_results)
-        else:
-            break
+    with tqdm(total=1.0) as pbar:
+      pbar.set_description("Loading Spotify playlists")
+      spotify_results = spotify_session.user_playlists(config['spotify']['username'])
+      total = spotify_results['total']
+      exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
+      while True:
+          pbar.update(len(spotify_results['items'])/total)
+          for spotify_playlist in spotify_results['items']:
+              if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
+                  playlists.append(spotify_playlist)
+          # move to the next page of results if there are still playlists remaining
+          if spotify_results['next']:
+              spotify_results = spotify_session.next(spotify_results)
+          else:
+              break
     return playlists
 
 def get_playlists_from_config(config):
