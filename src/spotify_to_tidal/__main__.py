@@ -13,7 +13,9 @@ def main():
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+    print("Opening Spotify session")
     spotify_session = _auth.open_spotify_session(config['spotify'])
+    print("Opening Tidal session")
     tidal_session = _auth.open_tidal_session()
     if not tidal_session.check_login():
         sys.exit("Could not connect to Tidal")
