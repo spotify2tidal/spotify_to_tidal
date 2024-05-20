@@ -234,7 +234,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 25), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
