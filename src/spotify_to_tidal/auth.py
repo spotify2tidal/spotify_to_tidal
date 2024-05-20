@@ -16,7 +16,8 @@ def open_spotify_session(config) -> spotipy.Spotify:
 				       scope='playlist-read-private',
 				       client_id=config['client_id'],
 				       client_secret=config['client_secret'],
-				       redirect_uri=config['redirect_uri'])
+				       redirect_uri=config['redirect_uri'],
+				       requests_timeout=2)
     try:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
