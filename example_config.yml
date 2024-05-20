@@ -13,3 +13,7 @@ spotify:
 # uncomment this block if you want to sync all playlists in the account with some exceptions
 #excluded_playlists:
 #  - spotify:playlist:1ABCDEqsABCD6EaABCDa0a
+
+# number of concurrent subprocesses when searching tracks in a playlist.
+# increasing this value can improve sync speed, but may increase 429 errors
+subprocesses: 25
