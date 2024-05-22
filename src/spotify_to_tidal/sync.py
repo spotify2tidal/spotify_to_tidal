@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from .database import failure_cache
 from functools import partial
 from typing import Sequence, Set, Mapping
 from multiprocessing import Pool
@@ -89,10 +90,12 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
-
 def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track: return cached_tidal_track
+    if spotify_track['id'] is None: return None
+    if failure_cache.has_match_failure(spotify_track['id']):
+        return None
     # search for album name and first album artist
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
         album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
@@ -101,11 +104,14 @@ def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> ti
             if len(album_tracks) >= spotify_track['track_number']:
                 track = album_tracks[spotify_track['track_number'] - 1]
                 if match(track, spotify_track):
+                    failure_cache.remove_match_failure(spotify_track['id'])
                     return track
     # if that fails then search for track name and first artist
     for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
         if match(track, spotify_track):
+            failure_cache.remove_match_failure(spotify_track['id'])
             return track
+    failure_cache.cache_match_failure(spotify_track['id'])
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     # a dictionary of name --> playlist

@@ -1,7 +1,7 @@
 # Config and cache files
 config.yml
 config.yaml
-.cache-*
+.cache*
 .session.yml
 
 # Byte-compiled / optimized / DLL files
