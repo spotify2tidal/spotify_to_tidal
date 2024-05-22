@@ -158,19 +158,25 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
             results[index] = result
     return results
 
+def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
+    """ implementation function for use with multiprocessing module """
+    fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
+    return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
+
 def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     output = []
-    results = spotify_session.playlist_tracks(
-        spotify_playlist["id"],
-        fields="next,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))",
-    )
-    while True:
-        output.extend([r['track'] for r in results['items'] if r['track'] is not None])
-        # move to the next page of results if there are still tracks remaining in the playlist
-        if results['next']:
-            results = spotify_session.next(results)
-        else:
-            return output
+    print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
+    results = _get_tracks_from_spotify_playlist( 0, spotify_session, spotify_playlist["id"] )
+    output.extend([r['track'] for r in results['items'] if r['track'] is not None])
+
+    # get all the remaining tracks in parallel
+    if results['next']:
+        offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
+        extra_results = call_async_with_progress(_get_tracks_from_spotify_playlist, offsets, "",
+                                                 min(len(offsets), 10), spotify_session=spotify_session, playlist_id=spotify_playlist["id"])
+        for extra_result in extra_results:
+            output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
+    return output
 
 class TidalPlaylistCache:
     def __init__(self, playlist: tidalapi.Playlist):
