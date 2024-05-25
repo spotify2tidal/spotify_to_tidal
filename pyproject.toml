@@ -16,7 +16,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "scalene"
+    "scalene",
+    "mypy",
+    "sqlalchemy[mypy]~=2.0",
+    "sqlalchemy-stubs"
 ]
 
 [tools.setuptools.packages."spotify_to_tidal"]
@@ -25,3 +28,6 @@ include = "spotify_to_tidal*"
 
 [project.scripts]
 spotify_to_tidal = "spotify_to_tidal.__main__:main"
+
+[tools.mypy]
+plugins = ["sqlalchemy.ext.mypy.plugin"]
