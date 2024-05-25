@@ -27,7 +27,7 @@ def main():
         _sync.sync_list(spotify_session, tidal_session, [tidal_playlist], config)
     elif config.get('sync_playlists', None):
         # if the config contains a sync_playlists list of mappings then use that
-        _sync.sync_list(spotify_session, tidal_session, _sync.get_playlists_from_config(config), config)
+        _sync.sync_list(spotify_session, tidal_session, _sync.get_playlists_from_config(spotify_session, tidal_session, config), config)
     else:
         # otherwise just use the user playlists in the Spotify account
         _sync.sync_list(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
