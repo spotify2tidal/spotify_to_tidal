@@ -152,18 +152,10 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         time.sleep(sleep_schedule.get(remaining, 1))
         return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
-def _enumerate_wrapper(value_tuple, function, **kwargs):
-    # just a wrapper which accepts a tuple from enumerate and returns the index back as the first argument
-    index, value = value_tuple
-    return (index, repeat_on_request_error(function, value, **kwargs))
-
 def call_async_with_progress(function, values, description, num_processes, **kwargs):
-    results = len(values)*[None]
     with Pool(processes=num_processes) as process_pool:
-        for index, result in tqdm(process_pool.imap_unordered(partial(_enumerate_wrapper, function=function, **kwargs),
-                                  enumerate(values)), total=len(values), desc=description):
-            results[index] = result
-    return results
+        results = [process_pool.apply_async(repeat_on_request_error, args=(function, value), kwds=kwargs) for value in values]
+        return [r.get() for r in tqdm(results, desc=description)]
 
 def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
     """ implementation function for use with multiprocessing module """
