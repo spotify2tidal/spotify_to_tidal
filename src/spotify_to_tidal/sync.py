@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-
-from .database import failure_cache
+import math
 from functools import partial
 from typing import Sequence, Set, Mapping, List
 from multiprocessing import Pool
@@ -12,9 +11,8 @@ import time
 from tqdm import tqdm
 import traceback
 import unicodedata
-from cachetools import TTLCache, cached
 
-from .search import search_tidal_albums, search_tidal_tracks
+from .database import failure_cache
 from .tidalapi_patch import set_tidal_playlist
 from .type import spotify as t_spotify
 
@@ -264,7 +262,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
     tidal_track_ids = []
     spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
-    track_cache = TidalTrackCache()
+    track_cache: TidalTrackCache = TidalTrackCache()
     track_cache.populate(spotify_tracks, tidal_playlist.tracks())
     spotify_track_mappings, cache_hits = track_cache.search(spotify_tracks)
     if cache_hits == len(spotify_tracks):
