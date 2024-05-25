@@ -98,8 +98,8 @@ def match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack) ->
 
 
 def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
-    spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track: return cached_tidal_track
+    spotify_track, cached_tidal_track_id = spotify_track_and_cache
+    if cached_tidal_track_id: return cached_tidal_track_id
     if spotify_track['id'] is None: return None
     if failure_cache.has_match_failure(spotify_track['id']):
         return None
