@@ -140,6 +140,7 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
             print(f"{str(e)} could not be recovered")
 
         if not e.response is None:
+            print(e.response.request.path_url)
             print(f"Response message: {e.response.text}")
             print(f"Response headers: {e.response.headers}")
 
@@ -201,11 +202,10 @@ class TidalTrackCache:
         ''' check if the given spotify track was already in the tidal playlist.'''
         return self.data.get(spotify_track['id'])
 
-    def search(self, spotify_session: spotipy.Spotify, spotify_playlist):
+    def search(self, spotify_tracks: Sequence[t_spotify.SpotifyTrack]) -> tuple[Sequence[tuple[t_spotify.SpotifyTrack, int | None]], int]:
         ''' Add the cached tidal track where applicable to a list of spotify tracks '''
         results = []
         cache_hits = 0
-        spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
         for track in spotify_tracks:
             cached_track = self._search(track)
             if cached_track:
@@ -270,11 +270,12 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 25), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_track_mappings, task_description, config.get('subprocesses', 25), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
-        spotify_track = spotify_tracks[index][0]
+        spotify_track = spotify_tracks[index]
         if tidal_track:
-            tidal_track_ids.append(tidal_track)
+            track_id = tidal_track.id if isinstance(tidal_track, tidalapi.Track) else tidal_track
+            tidal_track_ids.append(track_id)
         else:
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
