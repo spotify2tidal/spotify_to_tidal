@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from .database import failure_cache
 from functools import partial
 from typing import Sequence, Set, Mapping, List
 from multiprocessing import Pool
@@ -97,44 +98,33 @@ def match(tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack) ->
         and artist_match(tidal_track, spotify_track)
     )
 
-# Function for caching purposes
-@cached(TTLCache(maxsize=50, ttl=300))
-def get_album_tracks(album: tidalapi.Album) -> Sequence[tidalapi.Track]:
-    return album.tracks()
 
 def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track:
-        return cached_tidal_track
+    if cached_tidal_track: return cached_tidal_track
+    if spotify_track['id'] is None: return None
+    if failure_cache.has_match_failure(spotify_track['id']):
+        return None
     # search for album name and first album artist
-    if (
-        "album" in spotify_track
-        and "artists" in spotify_track["album"]
-        and len(spotify_track["album"]["artists"])
-    ):
-        for artist in spotify_track["album"]["artists"]:
-            artist_name = artist["name"]
-            album_name = spotify_track["album"]["name"]
-            album_result = search_tidal_albums(tidal_session, artist_name, album_name)
-            for album in album_result["albums"]:
-                album_tracks = get_album_tracks(album)
-                if len(album_tracks) >= spotify_track["track_number"]:
-                    track = album_tracks[spotify_track["track_number"] - 1]
-                    if match(track, spotify_track):
-                        TidalTrackCache().data[spotify_track['id']] = track.id
-                        return track
+    if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
+        album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
+        for album in album_result['albums']:
+            album_tracks = album.tracks()
+            if len(album_tracks) >= spotify_track['track_number']:
+                track = album_tracks[spotify_track['track_number'] - 1]
+                if match(track, spotify_track):
+                    failure_cache.remove_match_failure(spotify_track['id'])
+                    return track
     # if that fails then search for track name and first artist
-    spotify_track_name = spotify_track["name"]
-    for artist in spotify_track["artists"]:
-        artist_name = artist["name"]
-        search_res  = search_tidal_tracks(tidal_session, artist=artist_name, track=spotify_track_name)
-        res: tidalapi.Track | None = next(
-            (x for x in search_res["tracks"] if match(x, spotify_track)), None
-        )
-    return res
+    for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
+        if match(track, spotify_track):
+            failure_cache.remove_match_failure(spotify_track['id'])
+            return track
+    failure_cache.cache_match_failure(spotify_track['id'])
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     # a dictionary of name --> playlist
+    print("Loading Tidal playlists... This may take some time.")
     tidal_playlists = tidal_session.user.playlists()
     output = {}
     for playlist in tidal_playlists:
@@ -177,19 +167,25 @@ def call_async_with_progress(function, values, description, num_processes, **kwa
             results[index] = result
     return results
 
+def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
+    """ implementation function for use with multiprocessing module """
+    fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
+    return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
+
 def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     output = []
-    results = spotify_session.playlist_tracks(
-        spotify_playlist["id"],
-        fields="next,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))",
-    )
-    while True:
-        output.extend([r['track'] for r in results['items'] if r['track'] is not None])
-        # move to the next page of results if there are still tracks remaining in the playlist
-        if results['next']:
-            results = spotify_session.next(results)
-        else:
-            return output
+    print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
+    results = _get_tracks_from_spotify_playlist( 0, spotify_session, spotify_playlist["id"] )
+    output.extend([r['track'] for r in results['items'] if r['track'] is not None])
+
+    # get all the remaining tracks in parallel
+    if results['next']:
+        offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
+        extra_results = call_async_with_progress(_get_tracks_from_spotify_playlist, offsets, "",
+                                                 min(len(offsets), 10), spotify_session=spotify_session, playlist_id=spotify_playlist["id"])
+        for extra_result in extra_results:
+            output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
+    return output
 
 class TidalTrackCache:
     __slots__ = ()
@@ -276,7 +272,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 25), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
@@ -318,17 +314,21 @@ def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: 
 def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     # get all the user playlists from the Spotify account
     playlists = []
-    spotify_results = spotify_session.user_playlists(config['spotify']['username'])
-    exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
-    while True:
-        for spotify_playlist in spotify_results['items']:
-            if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
-                playlists.append(spotify_playlist)
-        # move to the next page of results if there are still playlists remaining
-        if spotify_results['next']:
-            spotify_results = spotify_session.next(spotify_results)
-        else:
-            break
+    with tqdm(total=1.0) as pbar:
+      pbar.set_description("Loading Spotify playlists")
+      spotify_results = spotify_session.user_playlists(config['spotify']['username'])
+      total = spotify_results['total']
+      exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
+      while True:
+          pbar.update(len(spotify_results['items'])/total)
+          for spotify_playlist in spotify_results['items']:
+              if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
+                  playlists.append(spotify_playlist)
+          # move to the next page of results if there are still playlists remaining
+          if spotify_results['next']:
+              spotify_results = spotify_session.next(spotify_results)
+          else:
+              break
     return playlists
 
 def get_playlists_from_config(config):
