@@ -31,3 +31,11 @@ spotify_to_tidal --uri 1ABCDEqsABCD6EaABCDa0a # accepts playlist id or full play
 ```
 
 See example_config.yml for more configuration options, and `spotify_to_tidal --help` for more options.
+
+---
+
+#### Join our amazing community as a code contributor
+<br><br>
+<a href="https://github.com/spotify2tidal/spotify_to_tidal/graphs/contributors">
+  <img class="dark-light" src="https://contrib.rocks/image?repo=spotify2tidal/spotify_to_tidal&anon=0&columns=25&max=100&r=true" />
+</a>
