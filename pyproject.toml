@@ -12,6 +12,7 @@ dependencies = [
   "tidalapi~=0.7",
   "pyyaml~=6.0",
   "tqdm~=4.64",
+  "sqlalchemy~=2.0"
 ]
 
 
