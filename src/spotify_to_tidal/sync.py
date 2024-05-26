@@ -9,7 +9,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import set_tidal_playlist
+from .tidalapi_patch import add_multiple_tracks_to_playlist, set_tidal_playlist
 import time
 from tqdm import tqdm
 import traceback
@@ -240,11 +240,16 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
 
     # Update the Tidal playlist if there are changes
+    old_tidal_track_ids = [t.id for t in old_tidal_tracks]
     new_tidal_track_ids = list(filter(lambda t: not t is None, [track_match_cache.get(spotify_track['id']) for spotify_track in spotify_tracks]))
-    if not new_tidal_track_ids == [t.id for t in old_tidal_tracks]:
-        set_tidal_playlist(tidal_playlist, new_tidal_track_ids)
-    else:
+    if new_tidal_track_ids == old_tidal_track_ids:
         print("No changes to write to Tidal playlist")
+    elif new_tidal_track_ids[:len(old_tidal_track_ids)] == old_tidal_track_ids:
+        # Append new tracks to the existing playlist if possible
+        add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids[len(old_tidal_track_ids):])
+    else:
+        # Erase old playlist and add new tracks from scratch if any reordering occured
+        set_tidal_playlist(tidal_playlist, new_tidal_track_ids)
 
 def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config):
   for spotify_playlist, tidal_playlist in playlists:
