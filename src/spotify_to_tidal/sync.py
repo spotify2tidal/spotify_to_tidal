@@ -188,7 +188,7 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
 
 def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tidal_tracks: List[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
-    def _populate_one_track(spotify_track: t_spotify.SpotifyTrack, tidal_tracks: List[tidalapi.Track]) -> bool:
+    def _populate_one_track(spotify_track: t_spotify.SpotifyTrack) -> bool:
         for idx, tidal_track in list(enumerate(tidal_tracks)):
             if match(tidal_track, spotify_track):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
@@ -196,10 +196,11 @@ def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tid
                 return True
         return False
 
+    tidal_tracks = [t for t in tidal_tracks] # make a copy to avoid overwriting original
     for track in spotify_tracks:
         if track_match_cache.get(track['id']):
             continue
-        _populate_one_track(track, tidal_tracks)
+        _populate_one_track(track)
 
 def get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks):
     ''' Extracts only the new tracks in the Spotify playlist that are not already on Tidal or known match failures '''
