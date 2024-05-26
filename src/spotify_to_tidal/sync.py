@@ -13,6 +13,7 @@ import time
 from tqdm import tqdm
 import traceback
 import unicodedata
+import math
 
 from .type import spotify as t_spotify
 
