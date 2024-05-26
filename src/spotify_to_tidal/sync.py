@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 from .cache import failure_cache, track_match_cache
 from functools import partial
 from typing import List, Sequence, Set, Mapping
@@ -12,6 +13,7 @@ import tidalapi
 from .tidalapi_patch import add_multiple_tracks_to_playlist, set_tidal_playlist
 import time
 from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
 import traceback
 import unicodedata
 
@@ -170,7 +172,7 @@ def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spot
     fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
     return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
 
-def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
+async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     output = []
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
     results = _get_tracks_from_spotify_playlist( 0, spotify_session, spotify_playlist["id"] )
@@ -179,12 +181,10 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
     # get all the remaining tracks in parallel
     if results['next']:
         offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
-        extra_results = call_async_with_progress(_get_tracks_from_spotify_playlist, offsets, "",
-                                                 num_processes=min(len(offsets), 10), rate_limit=10, spotify_session=spotify_session, playlist_id=spotify_playlist["id"])
+        extra_results = await atqdm.gather( *[asyncio.to_thread(_get_tracks_from_spotify_playlist, offset, spotify_session=spotify_session, playlist_id=spotify_playlist["id"]) for offset in offsets ] )
         for extra_result in extra_results:
             output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
     return output
-
 
 def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tidal_tracks: List[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
@@ -224,14 +224,14 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks):
             seen_tracks.add(tidal_id)
     return output
 
-def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
+async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
     # Create a new Tidal playlist if required
     if not tidal_playlist:
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
 
     # Extract the new tracks from the playlist that we haven't already seen before
-    spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
+    spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
     old_tidal_tracks = tidal_playlist.tracks()
     tracks_to_search = get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks)
     if not tracks_to_search:
@@ -265,7 +265,8 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
 def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config):
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
-    repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_playlist, tidal_playlist, config)
+    #repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_playlist, tidal_playlist, config)
+    asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
 
 def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: Mapping[str, tidalapi.Playlist]):
     if spotify_playlist['name'] in tidal_playlists:
@@ -276,31 +277,26 @@ def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: 
       return (spotify_playlist, None)
 
 def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
-  results = []
-  spotify_playlists = get_playlists_from_spotify(spotify_session, config)
-  tidal_playlists = get_tidal_playlists_dict(tidal_session)
-  for spotify_playlist in spotify_playlists:
-      results.append( pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists) )
-  return results
+    results = []
+    spotify_playlists = asyncio.run(get_playlists_from_spotify(spotify_session, config))
+    tidal_playlists = get_tidal_playlists_dict(tidal_session)
+    for spotify_playlist in spotify_playlists:
+        results.append( pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists) )
+    return results
 
-def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
+async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     # get all the user playlists from the Spotify account
     playlists = []
-    with tqdm(total=1.0) as pbar:
-      pbar.set_description("Loading Spotify playlists")
-      spotify_results = spotify_session.user_playlists(config['spotify']['username'])
-      total = spotify_results['total']
-      exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
-      while True:
-          pbar.update(len(spotify_results['items'])/total)
-          for spotify_playlist in spotify_results['items']:
-              if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
-                  playlists.append(spotify_playlist)
-          # move to the next page of results if there are still playlists remaining
-          if spotify_results['next']:
-              spotify_results = spotify_session.next(spotify_results)
-          else:
-              break
+    print("Loading Spotify playlists")
+    results = spotify_session.user_playlists(config['spotify']['username'])
+    exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
+      
+    # get all the remaining playlists in parallel
+    if results['next']:
+        offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
+        extra_results = await atqdm.gather( *[asyncio.to_thread(spotify_session.user_playlists, config['spotify']['username'], offset=offset) for offset in offsets ] )
+        for extra_result in extra_results:
+            playlists.extend([p for p in extra_result['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
     return playlists
 
 def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
