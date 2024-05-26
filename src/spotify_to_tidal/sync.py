@@ -136,17 +136,17 @@ def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, ti
         output[playlist.name] = playlist
     return output 
 
-def repeat_on_request_error(function, *args, remaining=5, **kwargs):
+async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
-        return function(*args, **kwargs)
-    except requests.exceptions.RequestException as e:
+        return await function(*args, **kwargs)
+    except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException) as e:
         if remaining:
             print(f"{str(e)} occurred, retrying {remaining} times")
         else:
             print(f"{str(e)} could not be recovered")
 
-        if not e.response is None:
+        if isinstance(e, requests.exceptions.RequestException) and not e.response is None:
             print(f"Response message: {e.response.text}")
             print(f"Response headers: {e.response.headers}")
 
@@ -157,7 +157,7 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
             sys.exit(1)
         sleep_schedule = {5: 1, 4:10, 3:60, 2:5*60, 1:10*60} # sleep variable length of time depending on retry number
         time.sleep(sleep_schedule.get(remaining, 1))
-        return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
+        return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
@@ -237,7 +237,7 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), spotify_playlist['name'])
     semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
     rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
-    search_results = await atqdm.gather( *[ tidal_search(t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
+    search_results = await atqdm.gather( *[ repeat_on_request_error(tidal_search, t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
     rate_limiter_task.cancel()
 
     # Add the search results to the cache
