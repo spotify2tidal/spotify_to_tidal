@@ -5,14 +5,12 @@ from .cache import failure_cache, track_match_cache
 from functools import partial
 from typing import List, Sequence, Set, Mapping
 import math
-from multiprocessing import Pool, Manager, Semaphore
 import requests
 import sys
 import spotipy
 import tidalapi
 from .tidalapi_patch import add_multiple_tracks_to_playlist, set_tidal_playlist
 import time
-from tqdm import tqdm
 from tqdm.asyncio import tqdm as atqdm
 import traceback
 import unicodedata
@@ -99,22 +97,34 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
-def tidal_search(spotify_track, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
-    # search for album name and first album artist
-    if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-        album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
-        for album in album_result['albums']:
-            album_tracks = album.tracks()
-            if len(album_tracks) >= spotify_track['track_number']:
-                track = album_tracks[spotify_track['track_number'] - 1]
-                if match(track, spotify_track):
-                    failure_cache.remove_match_failure(spotify_track['id'])
-                    return track
-    # if that fails then search for track name and first artist
-    for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
-        if match(track, spotify_track):
-            failure_cache.remove_match_failure(spotify_track['id'])
-            return track
+async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+    def _search_for_track_in_album():
+        # search for album name and first album artist
+        if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
+            album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
+            for album in album_result['albums']:
+                album_tracks = album.tracks()
+                if len(album_tracks) >= spotify_track['track_number']:
+                    track = album_tracks[spotify_track['track_number'] - 1]
+                    if match(track, spotify_track):
+                        failure_cache.remove_match_failure(spotify_track['id'])
+                        return track
+    def _search_for_standalone_track():
+        # if album search fails then search for track name and first artist
+        for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
+            if match(track, spotify_track):
+                failure_cache.remove_match_failure(spotify_track['id'])
+                return track
+    await rate_limiter.acquire()
+    album_search = await asyncio.to_thread( _search_for_track_in_album )
+    if album_search:
+        return album_search
+    await rate_limiter.acquire()
+    track_search = await asyncio.to_thread( _search_for_standalone_track )
+    if track_search:
+        return track_search
+
+    # if none of the search modes succeeded then store the track id to the failure cache
     failure_cache.cache_match_failure(spotify_track['id'])
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
@@ -149,30 +159,11 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         time.sleep(sleep_schedule.get(remaining, 1))
         return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
-def rate_limited_retry_wrapper(function, semaphore, *args, **kwargs):
-    semaphore.acquire()
-    return repeat_on_request_error(function, *args, **kwargs)
-
-def _leak_from_rate_limit_bucket(semaphore, rate_limit):
-    while True:
-        time.sleep(1/rate_limit) # sleep for min time between new function executions
-        semaphore.release() # leak one item from the 'bucket'
-
-def call_async_with_progress(function, values, description, num_processes, rate_limit, **kwargs):
-    with Manager() as manager:
-        semaphore=manager.Semaphore(num_processes)
-        with Pool(processes=num_processes) as process_pool:
-            with Pool(processes=1) as rate_limiter_pool:
-                results = [process_pool.apply_async(rate_limited_retry_wrapper, args=(function, semaphore, value), kwds=kwargs) for value in values]
-                rate_limiter_pool.apply_async( _leak_from_rate_limit_bucket, (semaphore, rate_limit))
-                return [r.get() for r in tqdm(results, desc=description)]
-
-def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
-    """ implementation function for use with multiprocessing module """
-    fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
-    return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
-
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
+    def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
+        fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
+        return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
+
     output = []
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
     results = _get_tracks_from_spotify_playlist( 0, spotify_session, spotify_playlist["id"] )
@@ -223,6 +214,12 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks):
     return output
 
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
+    async def _run_rate_limiter(semaphore):
+        ''' Leaky bucket algorithm for rate limiting. Periodically releases an item from semaphore at rate_limit'''
+        while True:
+            await asyncio.sleep(1/config.get('rate_limit', 12)) # sleep for min time between new function executions
+            semaphore.release() # leak one item from the 'bucket'
+
     # Create a new Tidal playlist if required
     if not tidal_playlist:
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
@@ -238,7 +235,10 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 
     # Search for each of the tracks on Tidal concurrently
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), spotify_playlist['name'])
-    search_results = call_async_with_progress(tidal_search, tracks_to_search, task_description, num_processes=config.get('subprocesses', 25), rate_limit=config.get('rate_limit', 25), tidal_session=tidal_session)
+    semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
+    rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
+    search_results = await atqdm.gather( *[ tidal_search(t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
+    rate_limiter_task.cancel()
 
     # Add the search results to the cache
     for idx, spotify_track in enumerate(tracks_to_search):
@@ -263,7 +263,6 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config):
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
-    #repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_playlist, tidal_playlist, config)
     asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
 
 def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: Mapping[str, tidalapi.Playlist]):
