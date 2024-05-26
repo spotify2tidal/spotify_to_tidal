@@ -4,7 +4,7 @@ from .cache import failure_cache, track_match_cache
 from functools import partial
 from typing import List, Sequence, Set, Mapping
 import math
-from multiprocessing import Pool
+from multiprocessing import Pool, Manager, Semaphore
 import requests
 import sys
 import spotipy
@@ -97,12 +97,7 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
-def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> int | None:
-    spotify_track, cached_tidal_track_id = spotify_track_and_cache
-    if cached_tidal_track_id: return cached_tidal_track_id
-    if spotify_track['id'] is None: return None
-    if failure_cache.has_match_failure(spotify_track['id']):
-        return None
+def tidal_search(spotify_track, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     # search for album name and first album artist
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
         album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
@@ -112,12 +107,12 @@ def tidal_search(spotify_track_and_cache, tidal_session: tidalapi.Session) -> in
                 track = album_tracks[spotify_track['track_number'] - 1]
                 if match(track, spotify_track):
                     failure_cache.remove_match_failure(spotify_track['id'])
-                    return track.id
+                    return track
     # if that fails then search for track name and first artist
     for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
         if match(track, spotify_track):
             failure_cache.remove_match_failure(spotify_track['id'])
-            return track.id
+            return track
     failure_cache.cache_match_failure(spotify_track['id'])
 
 def get_tidal_playlists_dict(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
@@ -152,10 +147,23 @@ def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         time.sleep(sleep_schedule.get(remaining, 1))
         return repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
-def call_async_with_progress(function, values, description, num_processes, **kwargs):
-    with Pool(processes=num_processes) as process_pool:
-        results = [process_pool.apply_async(repeat_on_request_error, args=(function, value), kwds=kwargs) for value in values]
-        return [r.get() for r in tqdm(results, desc=description)]
+def rate_limited_retry_wrapper(function, semaphore, *args, **kwargs):
+    semaphore.acquire()
+    return repeat_on_request_error(function, *args, **kwargs)
+
+def _leak_from_rate_limit_bucket(semaphore, rate_limit):
+    while True:
+        time.sleep(1/rate_limit) # sleep for min time between new function executions
+        semaphore.release() # leak one item from the 'bucket'
+
+def call_async_with_progress(function, values, description, num_processes, rate_limit, **kwargs):
+    with Manager() as manager:
+        semaphore=manager.Semaphore(num_processes)
+        with Pool(processes=num_processes) as process_pool:
+            with Pool(processes=1) as rate_limiter_pool:
+                results = [process_pool.apply_async(rate_limited_retry_wrapper, args=(function, semaphore, value), kwds=kwargs) for value in values]
+                rate_limiter_pool.apply_async( _leak_from_rate_limit_bucket, (semaphore, rate_limit))
+                return [r.get() for r in tqdm(results, desc=description)]
 
 def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
     """ implementation function for use with multiprocessing module """
@@ -172,14 +180,11 @@ def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_p
     if results['next']:
         offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
         extra_results = call_async_with_progress(_get_tracks_from_spotify_playlist, offsets, "",
-                                                 min(len(offsets), 10), spotify_session=spotify_session, playlist_id=spotify_playlist["id"])
+                                                 num_processes=min(len(offsets), 10), rate_limit=10, spotify_session=spotify_session, playlist_id=spotify_playlist["id"])
         for extra_result in extra_results:
             output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
     return output
 
-
-def tidal_playlist_is_dirty(old_tracks: List[tidalapi.Track], new_track_ids: Sequence[str|None]) -> bool:
-    return list(filter(lambda x: not x is None, new_track_ids) ) == [x.id for x in old_tracks]
 
 def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tidal_tracks: List[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
@@ -196,47 +201,46 @@ def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tid
             continue
         _populate_one_track(track, tidal_tracks)
 
-def search_track_match_cache(spotify_tracks):
-    ''' Seaches the tidal track cache and adds the cached tidal track where applicable to list of spotify tracks '''
+def get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks):
+    ''' Extracts only the new tracks in the Spotify playlist that are not already on Tidal or known match failures '''
+    populate_track_match_cache(spotify_tracks, old_tidal_tracks)
     results = []
-    cache_hits = 0
     for spotify_track in spotify_tracks:
-        cached_track_id = track_match_cache.get(spotify_track["id"])
-        if cached_track_id:
-            results.append( (spotify_track, cached_track_id) )
-            cache_hits += 1
-        else:
-            results.append( (spotify_track, None) )
-    return (results, cache_hits)
+        if not spotify_track['id']: continue
+        cached_track_id = track_match_cache.get(spotify_track['id'])
+        if not track_match_cache.get(spotify_track['id']) and not failure_cache.has_match_failure(spotify_track['id']):
+            results.append(spotify_track)
+    return results
 
 def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
+    # Create a new Tidal playlist if required
     if not tidal_playlist:
-        # create a new Tidal playlist if required
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
 
-    new_tidal_track_ids = []
+    # Extract the new tracks from the playlist that we haven't already seen before
     spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
     old_tidal_tracks = tidal_playlist.tracks()
-    populate_track_match_cache(spotify_tracks, old_tidal_tracks)
-    spotify_track_mappings, cache_hits = search_track_match_cache(spotify_tracks)
-
-    if cache_hits == len(spotify_tracks):
+    tracks_to_search = get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks)
+    if not tracks_to_search:
         print("No new tracks to search in Spotify playlist '{}'".format(spotify_playlist['name']))
         return
 
-    task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    new_tidal_tracks = call_async_with_progress(tidal_search, spotify_track_mappings, task_description, config.get('subprocesses', 25), tidal_session=tidal_session)
-    for index, tidal_track_id in enumerate(new_tidal_tracks):
-        spotify_track = spotify_tracks[index]
-        if tidal_track_id:
-            new_tidal_track_ids.append(tidal_track_id)
-            track_match_cache.insert((spotify_track['id'], tidal_track_id))
+    # Search for each of the tracks on Tidal concurrently
+    task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), spotify_playlist['name'])
+    search_results = call_async_with_progress(tidal_search, tracks_to_search, task_description, num_processes=config.get('subprocesses', 25), rate_limit=config.get('rate_limit', 25), tidal_session=tidal_session)
+
+    # Add the search results to the cache
+    for idx, spotify_track in enumerate(tracks_to_search):
+        if search_results[idx]:
+            track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
         else:
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
 
-    if tidal_playlist_is_dirty(old_tidal_tracks, new_tidal_track_ids):
+    # Update the Tidal playlist if there are changes
+    new_tidal_track_ids = list(filter(lambda t: not t is None, [track_match_cache.get(spotify_track['id']) for spotify_track in spotify_tracks]))
+    if not new_tidal_track_ids == [t.id for t in old_tidal_tracks]:
         set_tidal_playlist(tidal_playlist, new_tidal_track_ids)
     else:
         print("No changes to write to Tidal playlist")
