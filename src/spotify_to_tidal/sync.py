@@ -192,11 +192,9 @@ def populate_track_match_cache(spotify_tracks: List[t_spotify.SpotifyTrack], tid
         for idx, tidal_track in list(enumerate(tidal_tracks)):
             if match(tidal_track, spotify_track):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
-                tidal_tracks.pop(idx)
                 return True
         return False
 
-    tidal_tracks = [t for t in tidal_tracks] # make a copy to avoid overwriting original
     for track in spotify_tracks:
         if track_match_cache.get(track['id']):
             continue
