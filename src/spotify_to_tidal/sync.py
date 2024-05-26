@@ -213,6 +213,17 @@ def get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks):
             results.append(spotify_track)
     return results
 
+def get_tracks_for_new_tidal_playlist(spotify_tracks):
+    ''' gets list of corresponding tidal track ids for each spotify track, ignoring duplicates '''
+    output = []
+    seen_tracks = set()
+    for spotify_track in spotify_tracks:
+        tidal_id = track_match_cache.get(spotify_track['id'])
+        if tidal_id and not tidal_id in seen_tracks:
+            output.append(tidal_id)
+            seen_tracks.add(tidal_id)
+    return output
+
 def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
     # Create a new Tidal playlist if required
     if not tidal_playlist:
@@ -241,7 +252,7 @@ def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Sess
 
     # Update the Tidal playlist if there are changes
     old_tidal_track_ids = [t.id for t in old_tidal_tracks]
-    new_tidal_track_ids = list(filter(lambda t: not t is None, [track_match_cache.get(spotify_track['id']) for spotify_track in spotify_tracks]))
+    new_tidal_track_ids = get_tracks_for_new_tidal_playlist(spotify_tracks)
     if new_tidal_track_ids == old_tidal_track_ids:
         print("No changes to write to Tidal playlist")
     elif new_tidal_track_ids[:len(old_tidal_track_ids)] == old_tidal_track_ids:
