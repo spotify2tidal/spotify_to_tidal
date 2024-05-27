@@ -210,7 +210,6 @@ def get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks):
     results = []
     for spotify_track in spotify_tracks:
         if not spotify_track['id']: continue
-        cached_track_id = track_match_cache.get(spotify_track['id'])
         if not track_match_cache.get(spotify_track['id']) and not failure_cache.has_match_failure(spotify_track['id']):
             results.append(spotify_track)
     return results
