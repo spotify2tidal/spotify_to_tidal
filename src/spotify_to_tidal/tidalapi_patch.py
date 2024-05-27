@@ -3,7 +3,7 @@ from tqdm import tqdm
 def _remove_indices_from_playlist(playlist, indices):
     headers = {'If-None-Match': playlist._etag}
     index_string = ",".join(map(str, indices))
-    playlist.requests.request('DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
+    playlist.request.request('DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
     playlist._reparse()
 
 def clear_tidal_playlist(playlist, chunk_size=20):

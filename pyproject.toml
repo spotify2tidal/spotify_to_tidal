@@ -8,13 +8,12 @@ version = "0.0.1-dev"
 requires-python = ">= 3.10"
 
 dependencies = [
-  "spotipy~=2.21",
-  "tidalapi~=0.7",
+  "spotipy~=2.21.0",
+  "tidalapi==0.7.6",
   "pyyaml~=6.0",
   "tqdm~=4.64",
   "sqlalchemy~=2.0"
 ]
-
 
 [tools.setuptools.packages."spotify_to_tidal"]
 where = "src"
