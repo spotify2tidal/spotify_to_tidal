@@ -75,7 +75,7 @@ class TrackMatchCache:
     def get(self, track_id):
         return self.data.get(track_id, None)
 
-    def insert(self, mapping: Mapping[str, int]):
+    def insert(self, mapping: tuple[str, int]):
         self.data[mapping[0]] = mapping[1]
 
 
