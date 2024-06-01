@@ -21,7 +21,7 @@ class MatchFailureDatabase:
                                     sqlite_autoincrement=False)
         meta.create_all(self.engine)
 
-    def _get_next_retry_time(self, insert_time=None):
+    def _get_next_retry_time(self, insert_time: datetime.datetime | None = None) -> datetime.datetime:
         if insert_time:
             # double interval on each retry
             interval = 2 * (datetime.datetime.now() - insert_time)
@@ -29,7 +29,7 @@ class MatchFailureDatabase:
             interval = datetime.timedelta(days=7)
         return datetime.datetime.now() + interval
 
-    def cache_match_failure(self, track_id):
+    def cache_match_failure(self, track_id: str):
         """ notifies that matching failed for the given track_id """
         fetch_statement = select(self.match_failures).where(
             self.match_failures.c.track_id == track_id)
@@ -46,7 +46,7 @@ class MatchFailureDatabase:
                     connection.execute(insert(self.match_failures), {
                                        "track_id": track_id, "insert_time": datetime.datetime.now(), "next_retry": self._get_next_retry_time()})
 
-    def has_match_failure(self, track_id):
+    def has_match_failure(self, track_id: str) -> bool:
         """ checks if there was a recent search for which matching failed with the given track_id """
         statement = select(self.match_failures.c.next_retry).where(
             self.match_failures.c.track_id == track_id)
@@ -56,7 +56,7 @@ class MatchFailureDatabase:
                 return match_failure.next_retry > datetime.datetime.now()
             return False
 
-    def remove_match_failure(self, track_id):
+    def remove_match_failure(self, track_id: str):
         """ removes match failure from the database """
         statement = delete(self.match_failures).where(
             self.match_failures.c.track_id == track_id)
@@ -72,7 +72,7 @@ class TrackMatchCache:
     """
     data: Dict[str, int] = {}
 
-    def get(self, track_id):
+    def get(self, track_id: str) -> int | None:
         return self.data.get(track_id, None)
 
     def insert(self, mapping: tuple[str, int]):
