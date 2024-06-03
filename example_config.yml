@@ -14,6 +14,6 @@ spotify:
 #excluded_playlists:
 #  - spotify:playlist:1ABCDEqsABCD6EaABCDa0a
 
-# number of concurrent subprocesses when searching tracks in a playlist.
-# increasing this value can improve sync speed, but may increase 429 errors
-subprocesses: 25
+# increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
+max_concurrency: 10 # max concurrent connections at any given time
+rate_limit:      12 # max sustained connections per second
