@@ -154,7 +154,7 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         time.sleep(sleep_schedule.get(remaining, 1))
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
-async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist: t_spotify.SpotifyPlaylist):
+async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
         fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
         return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
