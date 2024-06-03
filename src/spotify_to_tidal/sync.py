@@ -85,6 +85,7 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
 
 def match(tidal_track, spotify_track) -> bool:
+    if not spotify_track['id']: return False
     return isrc_match(tidal_track, spotify_track) or (
         duration_match(tidal_track, spotify_track)
         and name_match(tidal_track, spotify_track)
@@ -214,6 +215,7 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
     output = []
     seen_tracks = set()
     for spotify_track in spotify_tracks:
+        if not spotify_track['id']: continue
         tidal_id = track_match_cache.get(spotify_track['id'])
         if tidal_id and not tidal_id in seen_tracks:
             output.append(tidal_id)
