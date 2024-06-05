@@ -180,7 +180,6 @@ async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) ->
     output = []
     print("Loading favorite tracks from Spotify")
     results = _get_favorite_tracks(0, spotify_session)
-    print(f"Found {results['total']} favorite tracks")
     output.extend([item['track'] for item in results['items'] if item['track'] is not None])
 
     # get all the remaining tracks in parallel
@@ -258,9 +257,9 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
     spotify_tracks = []
     # Extract the new tracks from the playlist that we haven't already seen before
     if sync_favorites:
-        print(spotify_playlist)
         spotify_tracks = spotify_playlist['tracks']
     else:
+        print(spotify_playlist)
         spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
     
     old_tidal_tracks = tidal_playlist.tracks()
@@ -331,7 +330,7 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     print("Loading Spotify playlists")
     results = spotify_session.user_playlists(config['spotify']['username'])
     exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
-      
+
     # get all the remaining playlists in parallel
     if results['next']:
         offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
@@ -346,6 +345,8 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
         return [(item['spotify_id'], item['tidal_id']) for item in config['sync_playlists']]
     output = []
     for spotify_id, tidal_id in get_playlist_ids(config):
+        if spotify_id == 'favorites':
+            continue
         try:
             spotify_playlist = spotify_session.playlist(spotify_id)
         except spotipy.SpotifyException as e:
