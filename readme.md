@@ -1,4 +1,4 @@
-A command line tool for importing your Spotify playlists into Tidal
+A command line tool for importing your Spotify playlists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
 
 Installation
 -----------
