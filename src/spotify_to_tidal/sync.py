@@ -173,6 +173,27 @@ async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spo
             output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
     return output
 
+async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) -> List[dict]:
+    def _get_favorite_tracks(offset: int, spotify_session: spotipy.Spotify):
+        return spotify_session.current_user_saved_tracks(offset=offset)
+
+    output = []
+    print("Loading favorite tracks from Spotify")
+    results = _get_favorite_tracks(0, spotify_session)
+    print(f"Found {results['total']} favorite tracks")
+    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+
+    # get all the remaining tracks in parallel
+    if results['next']:
+        offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
+        extra_results = await asyncio.gather(
+            *[asyncio.to_thread(_get_favorite_tracks, offset, spotify_session) for offset in offsets]
+        )
+        for extra_result in extra_results:
+            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+
+    return output
+
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
     def _populate_one_track_from_spotify(spotify_track: t_spotify.SpotifyTrack):
@@ -222,7 +243,7 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
             seen_tracks.add(tidal_id)
     return output
 
-async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
+async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config, sync_favorites=False):
     async def _run_rate_limiter(semaphore):
         ''' Leaky bucket algorithm for rate limiting. Periodically releases an item from semaphore at rate_limit'''
         while True:
@@ -234,8 +255,14 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
 
+    spotify_tracks = []
     # Extract the new tracks from the playlist that we haven't already seen before
-    spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
+    if sync_favorites:
+        print(spotify_playlist)
+        spotify_tracks = spotify_playlist['tracks']
+    else:
+        spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
+    
     old_tidal_tracks = tidal_playlist.tracks()
     tracks_to_search = get_new_tracks_from_spotify_playlist(spotify_tracks, old_tidal_tracks)
     if not tracks_to_search:
@@ -273,6 +300,14 @@ def sync_list(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session,
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
     asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
+
+async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, tidal_playlist_id: str, config):
+    tidal_playlist = tidal_session.playlist(tidal_playlist_id)
+    spotify_tracks = await get_tracks_from_spotify_favorites(spotify_session)
+    await sync_playlist(spotify_session, tidal_session, {'name': 'Favorites', 'tracks': spotify_tracks}, tidal_playlist, config, sync_favorites=True)
+
+def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, tidal_playlist_id: str, config):
+    asyncio.run(sync_favorites(spotify_session, tidal_session, tidal_playlist_id, config))
 
 def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: Mapping[str, tidalapi.Playlist]):
     if spotify_playlist['name'] in tidal_playlists:
