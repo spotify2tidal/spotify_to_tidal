@@ -3,7 +3,7 @@
 import asyncio
 from .cache import failure_cache, track_match_cache
 from functools import partial
-from typing import List, Sequence, Set, Mapping
+from typing import Callable, List, Sequence, Set, Mapping
 import math
 import requests
 import sys
@@ -155,43 +155,44 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         time.sleep(sleep_schedule.get(remaining, 1))
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
+
+async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fetch_function: Callable, reverse: bool = False) -> List[dict]:
+    output = []
+    print("Loading data from Spotify")
+    results = fetch_function(0, spotify_session)
+    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+
+    # Get all the remaining tracks in parallel
+    if results['next']:
+        offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
+        extra_results = await asyncio.gather(
+            *[asyncio.to_thread(fetch_function, offset, spotify_session) for offset in offsets]
+        )
+        for extra_result in extra_results:
+            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+    
+    if reverse:
+        output.reverse()
+
+    return output
+
+
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
-        fields="next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
+        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
         return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
 
-    output = []
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    results = _get_tracks_from_spotify_playlist( 0, spotify_session, spotify_playlist["id"] )
-    output.extend([r['track'] for r in results['items'] if r['track'] is not None])
+    return await _fetch_all_from_spotify_in_chunks(spotify_session, lambda offset, session: _get_tracks_from_spotify_playlist(offset, session, spotify_playlist["id"]))
 
-    # get all the remaining tracks in parallel
-    if results['next']:
-        offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
-        extra_results = await atqdm.gather( *[asyncio.to_thread(_get_tracks_from_spotify_playlist, offset, spotify_session=spotify_session, playlist_id=spotify_playlist["id"]) for offset in offsets ] )
-        for extra_result in extra_results:
-            output.extend([r['track'] for r in extra_result['items'] if r['track'] is not None])
-    return output
 
 async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) -> List[dict]:
     def _get_favorite_tracks(offset: int, spotify_session: spotipy.Spotify):
         return spotify_session.current_user_saved_tracks(offset=offset)
 
-    output = []
     print("Loading favorite tracks from Spotify")
-    results = _get_favorite_tracks(0, spotify_session)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+    return await _fetch_all_from_spotify_in_chunks(spotify_session, _get_favorite_tracks, reverse=True)
 
-    # get all the remaining tracks in parallel
-    if results['next']:
-        offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
-        extra_results = await asyncio.gather(
-            *[asyncio.to_thread(_get_favorite_tracks, offset, spotify_session) for offset in offsets]
-        )
-        for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
-
-    return output
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
