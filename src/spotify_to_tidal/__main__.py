@@ -9,6 +9,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
+    parser.add_argument('--sync-favorites', action='store_true', help='enable synchronization of favorites')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -24,13 +25,16 @@ def main():
         spotify_playlist = spotify_session.playlist(args.uri)
         tidal_playlists = _sync.get_tidal_playlists_dict(tidal_session)
         tidal_playlist = _sync.pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
-        _sync.sync_list(spotify_session, tidal_session, [tidal_playlist], config)
+        _sync.sync_playlists_wrapper(spotify_session, tidal_session, [tidal_playlist], config)
     elif config.get('sync_playlists', None):
         # if the config contains a sync_playlists list of mappings then use that
-        _sync.sync_list(spotify_session, tidal_session, _sync.get_playlists_from_config(spotify_session, tidal_session, config), config)
+        _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_playlists_from_config(spotify_session, tidal_session, config), config)
     else:
         # otherwise just use the user playlists in the Spotify account
-        _sync.sync_list(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
+        _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
+
+    if args.sync_favorites:
+        _sync.sync_favorites_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':
     main()
