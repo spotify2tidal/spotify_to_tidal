@@ -180,10 +180,10 @@ async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fe
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
         fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
-        return spotify_session.playlist_tracks(playlist_id, fields, offset=offset)
+        return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    return await _fetch_all_from_spotify_in_chunks(spotify_session, lambda offset, session: _get_tracks_from_spotify_playlist(offset, session, spotify_playlist["id"]))
+    return await _fetch_all_from_spotify_in_chunks(spotify_session=spotify_session, fetch_function=lambda offset, session: _get_tracks_from_spotify_playlist(offset=offset, spotify_session=session, playlist_id=spotify_playlist["id"]))
 
 
 async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) -> List[dict]:
@@ -191,7 +191,7 @@ async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) ->
         return spotify_session.current_user_saved_tracks(offset=offset)
 
     print("Loading favorite tracks from Spotify")
-    return await _fetch_all_from_spotify_in_chunks(spotify_session, _get_favorite_tracks, reverse=True)
+    return await _fetch_all_from_spotify_in_chunks(spotify_session=spotify_session, fetch_function=_get_favorite_tracks, reverse=True)
 
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
@@ -353,16 +353,14 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
     def get_playlist_ids(config):
         return [(item['spotify_id'], item['tidal_id']) for item in config['sync_playlists']]
     output = []
-    for spotify_id, tidal_id in get_playlist_ids(config):
-        if spotify_id == 'favorites':
-            continue
+    for spotify_id, tidal_id in get_playlist_ids(config=config):
         try:
-            spotify_playlist = spotify_session.playlist(spotify_id)
+            spotify_playlist = spotify_session.playlist(playlist_id=spotify_id)
         except spotipy.SpotifyException as e:
             print(f"Error getting Spotify playlist {spotify_id}")
             raise e
         try:
-            tidal_playlist = tidal_session.playlist(tidal_id)
+            tidal_playlist = tidal_session.playlist(playlist_id=tidal_id)
         except Exception as e:
             print(f"Error getting Tidal playlist {tidal_id}")
             raise e
