@@ -9,9 +9,7 @@ spotify:
 #sync_playlists:
 #  - spotify_id: 1ABCDEqsABCD6EaABCDa0a
 #    tidal_id: a0b1234-0a1b-012a-abcd-a1b234c5d6d7
-# sync favorites playlist
-#  - spotify_id: favorites
-#    tidal_id: a0b1234-0a1b-012a-abcd-a1b234c5d6d7
+
 
 # uncomment this block if you want to sync all playlists in the account with some exceptions
 #excluded_playlists:
