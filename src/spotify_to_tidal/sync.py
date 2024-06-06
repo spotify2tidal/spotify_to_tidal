@@ -296,6 +296,7 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     print("Loading Spotify playlists")
     results = spotify_session.user_playlists(config['spotify']['username'])
     exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
+    playlists.extend([p for p in results['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
       
     # get all the remaining playlists in parallel
     if results['next']:
