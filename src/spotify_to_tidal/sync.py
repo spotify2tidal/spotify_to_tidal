@@ -314,7 +314,7 @@ def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tida
 
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     spotify_tracks = await get_tracks_from_spotify_favorites(spotify_session=spotify_session)
-    old_tidal_tracks = tidal_session.user.favorites.tracks()
+    old_tidal_tracks = tidal_session.user.favorites.tracks(order='DATE')
     await sync_tracks(spotify_tracks=spotify_tracks, old_tidal_tracks=old_tidal_tracks, config=config, tidal_session=tidal_session, tidal_playlist=tidal_session.user.favorites, sync_favorites=True)
 
 def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists: Mapping[str, tidalapi.Playlist]):
