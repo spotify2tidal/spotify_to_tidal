@@ -156,7 +156,7 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
-async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fetch_function: Callable, reverse: bool = False) -> List[dict]:
+async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fetch_function: Callable) -> List[dict]:
     output = []
     results = fetch_function(0, spotify_session)
     output.extend([item['track'] for item in results['items'] if item['track'] is not None])
@@ -169,9 +169,6 @@ async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fe
         )
         for extra_result in extra_results:
             output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
-    
-    if reverse:
-        output.reverse()
 
     return output
 
@@ -190,8 +187,9 @@ async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) ->
         return spotify_session.current_user_saved_tracks(offset=offset)
 
     print("Loading favorite tracks from Spotify")
-    return await _fetch_all_from_spotify_in_chunks(spotify_session=spotify_session, fetch_function=_get_favorite_tracks, reverse=True)
-
+    tracks = await _fetch_all_from_spotify_in_chunks(spotify_session=spotify_session, fetch_function=_get_favorite_tracks)
+    tracks.reverse()
+    return tracks
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
