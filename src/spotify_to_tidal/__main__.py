@@ -9,7 +9,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
-    parser.add_argument('--disable-favorites-sync', action='store_true', help='disable synchronization of favorites')
+    parser.add_argument('--sync-favorites', action='store_true', help='enable synchronization of favorites')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -33,7 +33,7 @@ def main():
         # otherwise just use the user playlists in the Spotify account
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
 
-    if not args.disable_favorites_sync:
+    if args.sync_favorites:
         _sync.sync_favorites_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':

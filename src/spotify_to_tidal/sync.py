@@ -158,7 +158,6 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
 
 async def _fetch_all_from_spotify_in_chunks(spotify_session: spotipy.Spotify, fetch_function: Callable, reverse: bool = False) -> List[dict]:
     output = []
-    print("Loading data from Spotify")
     results = fetch_function(0, spotify_session)
     output.extend([item['track'] for item in results['items'] if item['track'] is not None])
 
