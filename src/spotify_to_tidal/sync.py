@@ -106,6 +106,9 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
             for album in album_result['albums']:
                 if album.num_tracks >= spotify_track['track_number'] and test_album_similarity(spotify_track['album'], album):
                     album_tracks = album.tracks()
+                    if len(album_tracks) < spotify_track['track_number']:
+                        assert( not len(album_tracks) == album.num_tracks ) # incorrect metadata :(
+                        continue
                     track = album_tracks[spotify_track['track_number'] - 1]
                     if match(track, spotify_track):
                         failure_cache.remove_match_failure(spotify_track['id'])
