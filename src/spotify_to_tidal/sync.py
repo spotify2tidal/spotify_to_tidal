@@ -11,7 +11,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist
+from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites
 import time
 from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
@@ -320,18 +320,16 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
-    def _clear_favorites(session: tidalapi.Session):
-        favorite_tracks = session.user.favorites.tracks()
-        track_ids = [track.id for track in favorite_tracks]
-        for track_id in tqdm(track_ids, desc="Erasing existing Tidal favorites"):
+    def _clear_favorites(session: tidalapi.Session, old_tidal_track_ids: List[tidalapi.Track]):
+        for track_id in tqdm(old_tidal_track_ids, desc="Erasing existing Tidal favorites"):
             session.user.favorites.remove_track(track_id)
     def _add_to_favorites(track_ids: Sequence[int], session: tidalapi.Session):
         for track_id in tqdm(track_ids, desc="Adding tracks to Tidal favorites"):
             session.user.favorites.add_track(track_id)
 
     spotify_tracks = await get_tracks_from_spotify_favorites(spotify_session=spotify_session)
-    print("Getting existing favorite tracks from Tidal")
-    old_tidal_tracks = tidal_session.user.favorites.tracks(order='DATE')
+    print("Loading favorite tracks from Tidal")
+    old_tidal_tracks = await get_all_favorites(tidal_session.user.favorites, order='DATE')
     populate_track_match_cache(spotify_tracks, old_tidal_tracks)
     new_tidal_track_ids = await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config)
 
@@ -344,7 +342,7 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
         _add_to_favorites(new_tidal_track_ids[len(old_tidal_track_ids):], tidal_session)
     else:
         # Erase old playlist and add new tracks from scratch if any reordering occured
-        _clear_favorites(tidal_session)
+        _clear_favorites(tidal_session, old_tidal_track_ids)
         _add_to_favorites(new_tidal_track_ids, tidal_session)
 
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
