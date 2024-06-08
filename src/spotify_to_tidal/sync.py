@@ -129,7 +129,6 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
     track_search = await asyncio.to_thread( _search_for_standalone_track )
     if track_search:
         return track_search
-    return None
 
     # if none of the search modes succeeded then store the track id to the failure cache
     failure_cache.cache_match_failure(spotify_track['id'])
