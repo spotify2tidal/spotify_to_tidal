@@ -2,6 +2,7 @@
 
 import asyncio
 from .cache import failure_cache, track_match_cache
+import datetime
 from functools import partial
 from typing import List, Sequence, Set, Mapping
 import math
@@ -224,10 +225,16 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
 
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
     async def _run_rate_limiter(semaphore):
-        ''' Leaky bucket algorithm for rate limiting. Periodically releases an item from semaphore at rate_limit'''
+        ''' Leaky bucket algorithm for rate limiting. Periodically releases items from semaphore at rate_limit'''
+        _sleep_time = config.get('max_concurrency', 10)/config.get('rate_limit', 10)/4 # aim to sleep approx time to drain 1/4 of 'bucket'
+        t0 = datetime.datetime.now()
         while True:
-            await asyncio.sleep(1/config.get('rate_limit', 12)) # sleep for min time between new function executions
-            semaphore.release() # leak one item from the 'bucket'
+            await asyncio.sleep(_sleep_time)
+            t = datetime.datetime.now()
+            dt = (t - t0).total_seconds()
+            new_items = round(config.get('rate_limit', 10)*dt)
+            t0 = t
+            [semaphore.release() for i in range(new_items)] # leak new_items from the 'bucket'
 
     # Create a new Tidal playlist if required
     if not tidal_playlist:
