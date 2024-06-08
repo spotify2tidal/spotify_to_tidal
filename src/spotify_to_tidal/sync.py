@@ -3,6 +3,7 @@
 import asyncio
 from .cache import failure_cache, track_match_cache
 import datetime
+from difflib import SequenceMatcher
 from functools import partial
 from typing import List, Sequence, Set, Mapping
 import math
@@ -51,7 +52,7 @@ def name_match(tidal_track, spotify_track) -> bool:
     simple_spotify_track = simple(spotify_track['name'].lower()).split('feat.')[0].strip()
     return simple_spotify_track in tidal_track.name.lower() or normalize(simple_spotify_track) in normalize(tidal_track.name.lower())
 
-def artist_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
+def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
     def split_artist_name(artist: str) -> Sequence[str]:
        if '&' in artist:
            return artist.split('&')
@@ -60,9 +61,9 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
        else:
            return [artist]
 
-    def get_tidal_artists(tidal_track: tidalapi.Track, do_normalize=False) -> Set[str]:
+    def get_tidal_artists(tidal: tidalapi.Track | tidalapi.Album, do_normalize=False) -> Set[str]:
         result: list[str] = []
-        for artist in tidal_track.artists:
+        for artist in tidal.artists:
             if do_normalize:
                 artist_name = normalize(artist.name)
             else:
@@ -70,9 +71,9 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
             result.extend(split_artist_name(artist_name))
         return set([simple(x.strip().lower()) for x in result])
 
-    def get_spotify_artists(spotify_track: t_spotify.SpotifyTrack, do_normalize=False) -> Set[str]:
+    def get_spotify_artists(spotify, do_normalize=False) -> Set[str]:
         result: list[str] = []
-        for artist in spotify_track['artists']:
+        for artist in spotify['artists']:
             if do_normalize:
                 artist_name = normalize(artist['name'])
             else:
@@ -81,9 +82,9 @@ def artist_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
         return set([simple(x.strip().lower()) for x in result])
     # There must be at least one overlapping artist between the Tidal and Spotify track
     # Try with both un-normalized and then normalized
-    if get_tidal_artists(tidal_track).intersection(get_spotify_artists(spotify_track)) != set():
+    if get_tidal_artists(tidal).intersection(get_spotify_artists(spotify)) != set():
         return True
-    return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
+    return get_tidal_artists(tidal, True).intersection(get_spotify_artists(spotify, True)) != set()
 
 def match(tidal_track, spotify_track) -> bool:
     if not spotify_track['id']: return False
@@ -93,21 +94,27 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
+def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
+    return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
+
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-            album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
+            query = simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name'])
+            album_result = tidal_session.search(query, models=[tidalapi.album.Album])
             for album in album_result['albums']:
-                album_tracks = album.tracks()
-                if len(album_tracks) >= spotify_track['track_number']:
+                if album.num_tracks >= spotify_track['track_number'] and test_album_similarity(spotify_track['album'], album):
+                    album_tracks = album.tracks()
                     track = album_tracks[spotify_track['track_number'] - 1]
                     if match(track, spotify_track):
                         failure_cache.remove_match_failure(spotify_track['id'])
                         return track
+
     def _search_for_standalone_track():
         # if album search fails then search for track name and first artist
-        for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
+        query = simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name'])
+        for track in tidal_session.search(query, models=[tidalapi.media.Track])['tracks']:
             if match(track, spotify_track):
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
