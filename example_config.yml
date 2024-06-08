@@ -16,4 +16,4 @@ spotify:
 
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time
-rate_limit:      12 # max sustained connections per second
+rate_limit:      10 # max sustained connections per second
