@@ -1,0 +1,38 @@
+version: 2.1
+
+jobs:
+  setup:
+    docker:
+      - image: circleci/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e .
+            pip install pytest pytest-mock
+
+  test:
+    docker:
+      - image: circleci/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e .
+            pip install pytest pytest-mock
+      - run:
+          name: Run tests
+          command: pytest
+
+workflows:
+  version: 2
+  test_workflow:
+    jobs:
+      - setup
+      - test:
+          requires:
+            - setup
