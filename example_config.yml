@@ -14,6 +14,11 @@ spotify:
 #excluded_playlists:
 #  - spotify:playlist:1ABCDEqsABCD6EaABCDa0a
 
+# default setting for syncing favorites when no command line arguments are provided
+#   - when true:  favorites will be synced by default (overriden when any command line arg provided)
+#   - when false: favorites can only be synced manually via --sync-favorites argument
+sync_favorites_default: true
+
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time
 rate_limit:      10 # max sustained connections per second
