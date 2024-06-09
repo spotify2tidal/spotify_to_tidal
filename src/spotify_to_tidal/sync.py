@@ -194,15 +194,6 @@ async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spo
     return await _fetch_all_from_spotify_in_chunks(lambda offset, session=spotify_session: _get_tracks_from_spotify_playlist(offset=offset, spotify_session=session, playlist_id=spotify_playlist["id"]))
 
 
-async def get_tracks_from_spotify_favorites(spotify_session: spotipy.Spotify) -> List[dict]:
-    def _get_favorite_tracks(offset: int):
-        return spotify_session.current_user_saved_tracks(offset=offset)
-
-    print("Loading favorite tracks from Spotify")
-    tracks = await _fetch_all_from_spotify_in_chunks(_get_favorite_tracks)
-    tracks.reverse()
-    return tracks
-
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
     def _populate_one_track_from_spotify(spotify_track: t_spotify.SpotifyTrack):
@@ -257,8 +248,8 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
                 seen_tracks.add(tidal_id)
     return output
 
-async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tracks: Sequence[t_spotify.SpotifyTrack], playlist_name: str, config: dict) -> List[t_spotify.SpotifyTrack]:
-    """ Generic function for searching for each item in a list of Spotify tracks which have not already been seen """
+async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tracks: Sequence[t_spotify.SpotifyTrack], playlist_name: str, config: dict):
+    """ Generic function for searching for each item in a list of Spotify tracks which have not already been seen and adding them to the cache """
     async def _run_rate_limiter(semaphore):
         ''' Leaky bucket algorithm for rate limiting. Periodically releases items from semaphore at rate_limit'''
         _sleep_time = config.get('max_concurrency', 10)/config.get('rate_limit', 10)/4 # aim to sleep approx time to drain 1/4 of 'bucket'
@@ -274,7 +265,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
     # Extract the new tracks that do not already exist in the old tidal tracklist
     tracks_to_search = get_new_spotify_tracks(spotify_tracks)
     if not tracks_to_search:
-        return get_tracks_for_new_tidal_playlist(spotify_tracks)
+        return
 
     # Search for each of the tracks on Tidal concurrently
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), playlist_name)
@@ -291,8 +282,6 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
             color = ('\033[91m', '\033[0m')
             print(color[0] + f"Could not find track {spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}" + color[1])
 
-    return get_tracks_for_new_tidal_playlist(spotify_tracks)
-
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
     # Create a new Tidal playlist if required
@@ -304,7 +293,8 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
     spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
     old_tidal_tracks = tidal_playlist.tracks()
     populate_track_match_cache(spotify_tracks, old_tidal_tracks)
-    new_tidal_track_ids = await search_new_tracks_on_tidal(tidal_session, spotify_tracks, spotify_playlist['name'], config)
+    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, spotify_playlist['name'], config)
+    new_tidal_track_ids = get_tracks_for_new_tidal_playlist(spotify_tracks)
 
     # Update the Tidal playlist if there are changes
     old_tidal_track_ids = [t.id for t in old_tidal_tracks]
@@ -320,30 +310,33 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
-    def _clear_favorites(session: tidalapi.Session, old_tidal_track_ids: List[tidalapi.Track]):
-        for track_id in tqdm(old_tidal_track_ids, desc="Erasing existing Tidal favorites"):
-            session.user.favorites.remove_track(track_id)
-    def _add_to_favorites(track_ids: Sequence[int], session: tidalapi.Session):
-        for track_id in tqdm(track_ids, desc="Adding tracks to Tidal favorites"):
-            session.user.favorites.add_track(track_id)
+    async def get_tracks_from_spotify_favorites() -> List[dict]:
+        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
+        tracks = await _fetch_all_from_spotify_in_chunks(_get_favorite_tracks)
+        tracks.reverse()
+        return tracks
 
-    spotify_tracks = await get_tracks_from_spotify_favorites(spotify_session=spotify_session)
-    print("Loading favorite tracks from Tidal")
+    def get_new_tidal_favorites() -> List[int]:
+        existing_favorite_ids = set([track.id for track in old_tidal_tracks])
+        new_ids = []
+        for spotify_track in spotify_tracks:
+            match_id = track_match_cache.get(spotify_track['id'])
+            if match_id and not match_id in existing_favorite_ids:
+                new_ids.append(match_id)
+        return new_ids
+
+    print("Loading favorite tracks from Spotify")
+    spotify_tracks = await get_tracks_from_spotify_favorites()
+    print("Loading existing favorite tracks from Tidal")
     old_tidal_tracks = await get_all_favorites(tidal_session.user.favorites, order='DATE')
     populate_track_match_cache(spotify_tracks, old_tidal_tracks)
-    new_tidal_track_ids = await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config)
-
-    # Update the Tidal playlist if there are changes
-    old_tidal_track_ids = [t.id for t in old_tidal_tracks]
-    if new_tidal_track_ids == old_tidal_track_ids:
-        print("No changes to write to Tidal favorites")
-    elif new_tidal_track_ids[:len(old_tidal_track_ids)] == old_tidal_track_ids:
-        # Append new tracks to the existing playlist if possible
-        _add_to_favorites(new_tidal_track_ids[len(old_tidal_track_ids):], tidal_session)
+    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config)
+    new_tidal_favorite_ids = get_new_tidal_favorites()
+    if new_tidal_favorite_ids:
+        for tidal_id in tqdm(new_tidal_favorite_ids, desc="Adding new tracks to Tidal favorites"):
+            tidal_session.user.favorites.add_track(tidal_id)
     else:
-        # Erase old playlist and add new tracks from scratch if any reordering occured
-        _clear_favorites(tidal_session, old_tidal_track_ids)
-        _add_to_favorites(new_tidal_track_ids, tidal_session)
+        print("No new tracks to add to Tidal favorites")
 
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
   for spotify_playlist, tidal_playlist in playlists:
