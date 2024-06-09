@@ -30,6 +30,12 @@ You can also just synchronize a specific playlist by doing the following:
 spotify_to_tidal --uri 1ABCDEqsABCD6EaABCDa0a # accepts playlist id or full playlist uri
 ```
 
+or sync just your 'Liked Songs' with:
+
+```bash
+spotify_to_tidal --sync-favorites
+```
+
 See example_config.yml for more configuration options, and `spotify_to_tidal --help` for more options.
 
 ---
