@@ -224,12 +224,20 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
     ''' gets list of corresponding tidal track ids for each spotify track, ignoring duplicates '''
     output = []
     seen_tracks = set()
+    duplicate_count = 0
     for spotify_track in spotify_tracks:
         if not spotify_track['id']: continue
         tidal_id = track_match_cache.get(spotify_track['id'])
-        if tidal_id and not tidal_id in seen_tracks:
-            output.append(tidal_id)
-            seen_tracks.add(tidal_id)
+        if tidal_id:
+            if tidal_id in seen_tracks:
+                track_name = spotify_track['name']
+                artist_names = ', '.join([artist['name'] for artist in spotify_track['artists']])
+                print(f'Duplicate found: Track "{track_name}" by {artist_names}')
+                duplicate_count += 1
+            else:
+                output.append(tidal_id)
+                seen_tracks.add(tidal_id)
+    print(f'Number of duplicates: {duplicate_count}')
     return output
 
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config):
