@@ -187,14 +187,14 @@ def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack]
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
     def _populate_one_track_from_spotify(spotify_track: t_spotify.SpotifyTrack):
         for idx, tidal_track in list(enumerate(tidal_tracks)):
-            if match(tidal_track, spotify_track):
+            if tidal_track.available and match(tidal_track, spotify_track):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
                 tidal_tracks.pop(idx)
                 return
 
     def _populate_one_track_from_tidal(tidal_track: tidalapi.Track):
         for idx, spotify_track in list(enumerate(spotify_tracks)):
-            if match(tidal_track, spotify_track):
+            if tidal_track.available and match(tidal_track, spotify_track):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
                 spotify_tracks.pop(idx)
                 return
