@@ -23,7 +23,7 @@ def main():
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
         spotify_playlist = spotify_session.playlist(args.uri)
-        tidal_playlists = _sync.get_tidal_playlists_dict(tidal_session)
+        tidal_playlists = _sync.get_tidal_playlists_wrapper(tidal_session)
         tidal_playlist = _sync.pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, [tidal_playlist], config)
         sync_favorites = args.sync_favorites # only sync favorites if command line argument explicitly passed
