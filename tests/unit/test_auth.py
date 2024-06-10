@@ -36,7 +36,7 @@ def test_open_spotify_session(mocker):
     # Assert that the SpotifyOAuth was called with correct parameters
     mock_spotify_oauth.assert_called_once_with(
         username="test_user",
-        scope="playlist-read-private",
+        scope="playlist-read-private, user-library-read",
         client_id="test_client_id",
         client_secret="test_client_secret",
         redirect_uri="http://localhost/",
