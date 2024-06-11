@@ -11,9 +11,11 @@ __all__ = [
     'open_tidal_session'
 ]
 
+SPOTIFY_SCOPES = 'playlist-read-private, user-library-read'
+
 def open_spotify_session(config) -> spotipy.Spotify:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
-				       scope='playlist-read-private, user-library-read',
+				       scope=SPOTIFY_SCOPES,
 				       client_id=config['client_id'],
 				       client_secret=config['client_secret'],
 				       redirect_uri=config['redirect_uri'],

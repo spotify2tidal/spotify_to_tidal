@@ -6,7 +6,7 @@ import tidalapi
 import yaml
 import sys
 from unittest import mock
-from spotify_to_tidal.auth import open_spotify_session, open_tidal_session
+from spotify_to_tidal.auth import open_spotify_session, open_tidal_session, SPOTIFY_SCOPES
 
 
 def test_open_spotify_session(mocker):
@@ -36,7 +36,7 @@ def test_open_spotify_session(mocker):
     # Assert that the SpotifyOAuth was called with correct parameters
     mock_spotify_oauth.assert_called_once_with(
         username="test_user",
-        scope="playlist-read-private",
+        scope=SPOTIFY_SCOPES,
         client_id="test_client_id",
         client_secret="test_client_secret",
         redirect_uri="http://localhost/",
