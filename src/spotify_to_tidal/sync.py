@@ -266,13 +266,20 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
     rate_limiter_task.cancel()
 
     # Add the search results to the cache
+    song404 = []
     for idx, spotify_track in enumerate(tracks_to_search):
         if search_results[idx]:
             track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
         else:
+            song404.append(f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}")
             color = ('\033[91m', '\033[0m')
-            print(color[0] + f"Could not find track {spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}" + color[1])
+            print(color[0] + "Could not find the track " + song404[-1] + color[1])
+    file_name = "songs not found.txt"
+    with open(file_name, "a") as file:
+        for song in song404:
+            file.write(f"{song}\n")
 
+            
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
     # Create a new Tidal playlist if required
