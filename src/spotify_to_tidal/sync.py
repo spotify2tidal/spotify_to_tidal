@@ -11,7 +11,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks, get_all_playlist_tracks
+from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
 import time
 from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
@@ -138,7 +138,7 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
         return await function(*args, **kwargs)
-    except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException) as e:
+    except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException, spotipy.exceptions.SpotifyException) as e:
         if remaining:
             print(f"{str(e)} occurred, retrying {remaining} times")
         else:
@@ -177,12 +177,12 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
 
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
-    def _get_tracks_from_spotify_playlist(offset: int, spotify_session: spotipy.Spotify, playlist_id: str):
+    def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
         fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
         return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    return await _fetch_all_from_spotify_in_chunks(lambda offset, session=spotify_session: _get_tracks_from_spotify_playlist(offset=offset, spotify_session=session, playlist_id=spotify_playlist["id"]))
+    return await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
 
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
@@ -310,7 +310,7 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
     """ sync user favorites to tidal """
     async def get_tracks_from_spotify_favorites() -> List[dict]:
         _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
-        tracks = await _fetch_all_from_spotify_in_chunks(_get_favorite_tracks)
+        tracks = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, _get_favorite_tracks)
         tracks.reverse()
         return tracks
 
