@@ -368,14 +368,14 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     # get all the user playlists from the Spotify account
     playlists = []
     print("Loading Spotify playlists")
-    results = spotify_session.user_playlists(config['spotify']['username'])
+    results = spotify_session.current_user_playlists()
     exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
     playlists.extend([p for p in results['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
 
     # get all the remaining playlists in parallel
     if results['next']:
         offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
-        extra_results = await atqdm.gather( *[asyncio.to_thread(spotify_session.user_playlists, config['spotify']['username'], offset=offset) for offset in offsets ] )
+        extra_results = await atqdm.gather( *[asyncio.to_thread(spotify_session.current_user_playlists, offset=offset) for offset in offsets ] )
         for extra_result in extra_results:
             playlists.extend([p for p in extra_result['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
     return playlists
