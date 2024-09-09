@@ -275,7 +275,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find the track " + song404[-1] + color[1])
     file_name = "songs not found.txt"
-    with open(file_name, "a") as file:
+    with open(file_name, "a", encoding="utf-8") as file:
         for song in song404:
             file.write(f"{song}\n")
 
