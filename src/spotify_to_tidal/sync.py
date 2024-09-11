@@ -365,20 +365,25 @@ def get_user_playlist_mappings(spotify_session: spotipy.Spotify, tidal_session: 
     return results
 
 async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
-    # get all the user playlists from the Spotify account
+    # get all the playlists from the Spotify account
     playlists = []
     print("Loading Spotify playlists")
-    results = spotify_session.current_user_playlists()
+    first_results = spotify_session.current_user_playlists()
     exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
-    playlists.extend([p for p in results['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
+    playlists.extend([p for p in first_results['items']])
+    user_id = spotify_session.current_user()['id']
 
     # get all the remaining playlists in parallel
-    if results['next']:
-        offsets = [ results['limit'] * n for n in range(1, math.ceil(results['total']/results['limit'])) ]
+    if first_results['next']:
+        offsets = [ first_results['limit'] * n for n in range(1, math.ceil(first_results['total']/first_results['limit'])) ]
         extra_results = await atqdm.gather( *[asyncio.to_thread(spotify_session.current_user_playlists, offset=offset) for offset in offsets ] )
         for extra_result in extra_results:
-            playlists.extend([p for p in extra_result['items'] if p['owner']['id'] == config['spotify']['username'] and not p['id'] in exclude_list])
-    return playlists
+            playlists.extend([p for p in extra_result['items']])
+
+    # filter out playlists that don't belong to us or are on the exclude list
+    my_playlist_filter = lambda p: p['owner']['id'] == user_id
+    exclude_filter = lambda p: not p['id'] in exclude_list
+    return list(filter( exclude_filter, filter( my_playlist_filter, playlists )))
 
 def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     # get the list of playlist sync mappings from the configuration file
