@@ -178,12 +178,13 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)))"
+        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
         return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    return await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
-
+    items = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
+    track_filter = lambda item: item.get('type', 'track') == 'track' # type may be 'episode' also
+    return list(filter(track_filter, items))
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
@@ -282,14 +283,18 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
             
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
-    # Create a new Tidal playlist if required
-    if not tidal_playlist:
+    # Get the tracks from both Spotify and Tidal, creating a new Tidal playlist if necessary
+    spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
+    if len(spotify_tracks) == 0:
+        return # nothing to do
+    if tidal_playlist:
+        old_tidal_tracks = await get_all_playlist_tracks(tidal_playlist)
+    else:
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
+        old_tidal_tracks = []
 
     # Extract the new tracks from the playlist that we haven't already seen before
-    spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
-    old_tidal_tracks = await get_all_playlist_tracks(tidal_playlist)
     populate_track_match_cache(spotify_tracks, old_tidal_tracks)
     await search_new_tracks_on_tidal(tidal_session, spotify_tracks, spotify_playlist['name'], config)
     new_tidal_track_ids = get_tracks_for_new_tidal_playlist(spotify_tracks)
