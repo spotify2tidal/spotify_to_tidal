@@ -184,7 +184,8 @@ async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spo
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
     items = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
     track_filter = lambda item: item.get('type', 'track') == 'track' # type may be 'episode' also
-    return list(filter(track_filter, items))
+    sanity_filter = lambda item: 'album' in item and 'name' in item['album'] and 'artists' in item['album'] and len(item['album']['artists']) > 0
+    return list(filter(sanity_filter, filter(track_filter, items)))
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
