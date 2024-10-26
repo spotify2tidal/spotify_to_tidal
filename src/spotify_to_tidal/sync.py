@@ -275,7 +275,9 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
     song404_by_playlist = {}
     color = ('\033[91m', '\033[0m')
     for idx, spotify_track in enumerate(tracks_to_search):
-        if not search_results[idx]:
+        if search_results[idx]:
+            track_match_cache.insert((spotify_track['id'], search_results[idx].id))
+        else:
             playlist_entries = song404_by_playlist.setdefault(playlist_name, [])
             song_info = f"{spotify_track['name']} - {', '.join(a['name'] for a in spotify_track['artists'])}"
             playlist_entries.append(song_info)
@@ -287,24 +289,30 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
 
 
 def save_missing_tracks_to_file(song404_by_playlist: dict):
-    """Saves the missing tracks organized by playlist to a log file with timestamp."""
+    """Saves the missing tracks organized by playlist to a log file with timestamp, if there are missing tracks."""
     if not song404_by_playlist:
         return # Exit if there are no missing tracks
 
-    # Create the logs directory if it doesn't exist
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    try:
+        # Create the logs directory if it doesn't exist
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
 
-    # Filename with a timestamp
-    file_name = log_dir / f"sync_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        # Filename with a timestamp
+        file_name = log_dir / f"sync_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
-    # Write missing tracks to the file, organized by playlist
-    with open(file_name, "a", encoding="utf-8") as file:
-        for playlist, songs in song404_by_playlist.items():
-            file.write(f"Playlist {playlist}:\n")
-            for song in songs:
-                file.write(f"{song}\n")
-            file.write("\n")
+        # Write missing tracks to the file, organized by playlist
+        with open(file_name, "a", encoding="utf-8") as file:
+            for playlist, songs in song404_by_playlist.items():
+                file.write(f"Playlist {playlist}:\n")
+                for song in songs:
+                    file.write(f"{song}\n")
+                file.write("\n")
+
+    except OSError as e:
+        print(f"Error creating or writing to log file '{file_name}': {e}")
+    except Exception as e:
+        print(f"Unexpected error occurred while saving missing tracks to file: {e}")
 
             
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
