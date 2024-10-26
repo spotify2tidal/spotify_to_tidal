@@ -24,6 +24,7 @@ def test_open_spotify_session(mocker):
         "client_id": "test_client_id",
         "client_secret": "test_client_secret",
         "redirect_uri": "http://localhost/",
+        "open_browser": True,
     }
 
     # Create a mock SpotifyOAuth instance
@@ -41,6 +42,7 @@ def test_open_spotify_session(mocker):
         client_secret="test_client_secret",
         redirect_uri="http://localhost/",
         requests_timeout=2,
+        open_browser=True,
     )
 
     # Assert that the Spotify instance was created

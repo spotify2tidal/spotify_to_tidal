@@ -3,6 +3,7 @@ spotify:
   client_secret: your_client_secret
   username: your_spotify_username
   redirect_uri: http://localhost:8888/callback
+  open_browser: True # Set to False if using a headless server environment
 
 
 # uncomment this block if you want to only sync specific playlist IDs
