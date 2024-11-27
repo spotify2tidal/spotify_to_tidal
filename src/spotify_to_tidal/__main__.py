@@ -38,8 +38,19 @@ def main():
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
         sync_favorites = args.sync_favorites is None and config.get('sync_favorites_default', True)
 
+    # Sync favorites if enabled in the config
     if sync_favorites:
         _sync.sync_favorites_wrapper(spotify_session, tidal_session, config)
+
+    # Sync artists if enabled in the config
+    sync_artists = config.get('sync_artists_default', False)
+    if sync_artists:
+        _sync.sync_artists_wrapper(spotify_session, tidal_session, config)
+
+    # Sync albums if enabled in the config
+    sync_albums = config.get('sync_albums_default', False)
+    if sync_albums:
+        _sync.sync_albums_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':
     main()
