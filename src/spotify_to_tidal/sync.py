@@ -158,12 +158,14 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
-async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
+async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable, item_key: str = "track") -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+    
+    # Get all the items from the first chunk
+    output.extend([item[item_key] for item in results['items'] if item.get(item_key) is not None])
 
-    # Get all the remaining tracks in parallel
+    # Get all the remaining chunks in parallel
     if results['next']:
         offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
         extra_results = await atqdm.gather(
@@ -171,7 +173,7 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            output.extend([item[item_key] for item in extra_result['items'] if item.get(item_key) is not None])
 
     return output
 
@@ -415,31 +417,55 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
     print("Artist synchronization complete.")
 
 async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
-    """ Synchronize user-saved albums from Spotify to Tidal """
+    """Synchronize user-saved albums from Spotify to Tidal."""
     print("Loading saved albums from Spotify")
-    
+
     # Get all saved albums from Spotify
     def _get_saved_albums(offset=0):
         return spotify_session.current_user_saved_albums(offset=offset)
-    
-    albums = []
-    results = await repeat_on_request_error(_fetch_all_from_spotify_in_chunks, _get_saved_albums)
-    albums.extend([item['album'] for item in results])
+
+    # Fetch all saved albums from Spotify
+    results = await repeat_on_request_error(_fetch_all_from_spotify_in_chunks, _get_saved_albums, item_key="album")
+    albums = [item for item in results]
 
     print(f"Found {len(albums)} albums saved on Spotify")
-    
+
     # Get existing saved albums from Tidal
     tidal_albums = tidal_session.user.favorites.albums()
     tidal_album_names = set([normalize(album.name.lower()) for album in tidal_albums])
-    
+
     # Filter new albums to add to Tidal
     new_albums = [album for album in albums if normalize(album['name'].lower()) not in tidal_album_names]
-    
+
+    if not new_albums:
+        print("All saved albums are already in Tidal.")
+        return
+
+    # Function to search for an album on Tidal
+    async def search_album_on_tidal(album_name: str, artist_name: str):
+        try:
+            query = f"{album_name} {artist_name}"
+            result = tidal_session.search(query, models=[tidalapi.album.Album])
+            if result and 'albums' in result and result['albums']:
+                return result['albums'][0]  # Return the first match
+        except Exception as e:
+            print(f"Error searching for album '{album_name}' on Tidal: {e}")
+        return None
+
     # Add new albums to Tidal
     for album in tqdm(new_albums, desc="Adding new albums to Tidal"):
-        tidal_session.user.favorites.add_album(album['id'])
-    
+        try:
+            artist_name = album['artists'][0]['name'] if album['artists'] else ""
+            tidal_album = await search_album_on_tidal(album['name'], artist_name)
+            if tidal_album:
+                tidal_session.user.favorites.add_album(tidal_album.id)
+            else:
+                print(f"Album '{album['name']}' not found on Tidal.")
+        except Exception as e:
+            print(f"Failed to add album '{album['name']}' to Tidal: {e}")
+
     print("Album synchronization complete.")
+
 
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
   for spotify_playlist, tidal_playlist in playlists:
