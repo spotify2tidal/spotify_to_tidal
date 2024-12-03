@@ -387,7 +387,7 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
             playlists.extend([p for p in extra_result['items']])
 
     # filter out playlists that don't belong to us or are on the exclude list
-    my_playlist_filter = lambda p: p['owner']['id'] == user_id
+    my_playlist_filter = lambda p: p and p['owner']['id'] == user_id
     exclude_filter = lambda p: not p['id'] in exclude_list
     return list(filter( exclude_filter, filter( my_playlist_filter, playlists )))
 
