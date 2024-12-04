@@ -18,6 +18,7 @@ from tqdm import tqdm
 import traceback
 import unicodedata
 import math
+from pathlib import Path
 
 from .type import spotify as t_spotify
 
@@ -261,25 +262,57 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         return
 
     # Search for each of the tracks on Tidal concurrently
-    task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), playlist_name)
+    task_description = f"Searching Tidal for {len(tracks_to_search)}/{len(spotify_tracks)} tracks in Spotify playlist '{playlist_name}'"
     semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
     rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
-    search_results = await atqdm.gather( *[ repeat_on_request_error(tidal_search, t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
+    search_results = await atqdm.gather(
+        *[repeat_on_request_error(tidal_search, t, semaphore, tidal_session) for t in tracks_to_search],
+        desc=task_description
+    )
     rate_limiter_task.cancel()
 
-    # Add the search results to the cache
-    song404 = []
+    # Organize tracks not found in Tidal by playlist
+    song404_by_playlist = {}
+    color = ('\033[91m', '\033[0m')
     for idx, spotify_track in enumerate(tracks_to_search):
         if search_results[idx]:
-            track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
+            track_match_cache.insert((spotify_track['id'], search_results[idx].id))
         else:
-            song404.append(f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}")
-            color = ('\033[91m', '\033[0m')
-            print(color[0] + "Could not find the track " + song404[-1] + color[1])
-    file_name = "songs not found.txt"
-    with open(file_name, "a", encoding="utf-8") as file:
-        for song in song404:
-            file.write(f"{song}\n")
+            playlist_entries = song404_by_playlist.setdefault(playlist_name, [])
+            song_info = f"{spotify_track['name']} - {', '.join(a['name'] for a in spotify_track['artists'])}"
+            playlist_entries.append(song_info)
+            print(color[0] + "Could not find the track " + song_info + color[1])
+
+
+    # Save missing tracks to file
+    save_missing_tracks_to_file(song404_by_playlist)
+
+
+def save_missing_tracks_to_file(song404_by_playlist: dict):
+    """Saves the missing tracks organized by playlist to a log file with timestamp, if there are missing tracks."""
+    if not song404_by_playlist:
+        return # Exit if there are no missing tracks
+
+    try:
+        # Create the logs directory if it doesn't exist
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+
+        # Filename with a timestamp
+        file_name = log_dir / f"sync_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+        # Write missing tracks to the file, organized by playlist
+        with open(file_name, "a", encoding="utf-8") as file:
+            for playlist, songs in song404_by_playlist.items():
+                file.write(f"Playlist {playlist}:\n")
+                for song in songs:
+                    file.write(f"{song}\n")
+                file.write("\n")
+
+    except OSError as e:
+        print(f"Error creating or writing to log file '{file_name}': {e}")
+    except Exception as e:
+        print(f"Unexpected error occurred while saving missing tracks to file: {e}")
 
             
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
