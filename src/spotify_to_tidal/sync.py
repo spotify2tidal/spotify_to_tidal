@@ -158,12 +158,14 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
-async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
+async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable, item_key: str = "track") -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+    
+    # Get all the items from the first chunk
+    output.extend([item[item_key] for item in results['items'] if item.get(item_key) is not None])
 
-    # Get all the remaining tracks in parallel
+    # Get all the remaining chunks in parallel
     if results['next']:
         offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
         extra_results = await atqdm.gather(
@@ -171,7 +173,7 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            output.extend([item[item_key] for item in extra_result['items'] if item.get(item_key) is not None])
 
     return output
 
@@ -281,7 +283,16 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         for song in song404:
             file.write(f"{song}\n")
 
-            
+def album_match(tidal_album, spotify_album, threshold=0.6):
+    """Check if the Spotify album is similar to the Tidal album."""
+    name_match = SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold
+    artist_match = any(
+        normalize(artist.name.lower()) == normalize(spotify_album['artists'][0]['name'].lower())
+        for artist in tidal_album.artists
+    )
+    track_count_match = tidal_album.num_tracks == spotify_album.get("total_tracks", -1)
+    return name_match and artist_match and track_count_match
+
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
     # Get the tracks from both Spotify and Tidal, creating a new Tidal playlist if necessary
@@ -342,6 +353,186 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
     else:
         print("No new tracks to add to Tidal favorites")
 
+async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """Synchronize user-followed artists from Spotify to Tidal."""
+    print("Loading followed artists from Spotify")
+
+    async def get_all_followed_artists() -> List[dict]:
+        """Fetch all followed artists from Spotify."""
+        followed_artists = []
+        after = None
+
+        while True:
+            response = await repeat_on_request_error(
+                lambda: asyncio.to_thread(spotify_session.current_user_followed_artists, after=after)
+            )
+            artists = response['artists']['items']
+            followed_artists.extend(artists)
+
+            if not response['artists']['cursors'].get('after'):
+                break
+
+            after = response['artists']['cursors']['after']
+
+        return followed_artists
+    
+    async def find_tidal_track_by_spotify_track(spotify_track: dict, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+        """Find a Tidal track that matches a Spotify track."""
+        isrc = spotify_track.get("external_ids", {}).get("isrc")
+        track_name = spotify_track.get("name", "").strip()
+        artist_name = spotify_track.get("artists", [{}])[0].get("name", "").strip()
+
+        # Search by ISRC
+        if isrc:
+            try:
+                isrc_results = tidal_session.get_tracks_by_isrc(isrc)
+                if isrc_results and "tracks" in isrc_results and isrc_results["tracks"]:
+                    for tidal_track in isrc_results["tracks"]:
+                        if isrc_match(tidal_track, spotify_track):
+                            return tidal_track
+            except Exception as e:
+                print(f"Error searching by ISRC: {e}")
+
+        #Fallback to song name and artist name
+        try:
+            query = f"{track_name} {artist_name}"
+            search_results = tidal_session.search(query, models=[tidalapi.media.Track])
+
+            if search_results and "tracks" in search_results:
+                for tidal_track in search_results["tracks"]:
+                    if normalize(tidal_track.name) == normalize(track_name) and artist_match(tidal_track, spotify_track):
+                        return tidal_track
+        except Exception as e:
+            print(f"Error searching by song name and artist: {e}")
+
+        # No match found
+        return None
+
+
+    async def match_artist_with_tidal_tracks(spotify_artist: dict, tidal_candidates: List[tidalapi.artist.Artist]):
+        """Match a Spotify artist with Tidal artists using their top tracks."""
+        top_tracks = spotify_session.artist_top_tracks(spotify_artist['id'])['tracks'][:5]
+        if not top_tracks:
+            print(f"No top tracks found for Spotify artist {spotify_artist['name']}.")
+            return None
+
+        for tidal_artist in tidal_candidates:
+            for track in top_tracks:
+                tidal_track = await find_tidal_track_by_spotify_track(track, tidal_session)
+                if tidal_track and tidal_artist.id in [a.id for a in tidal_track.artists]:
+                    return tidal_artist
+
+        return None
+
+    # Fetch all followed artists from Spotify
+    spotify_artists = await get_all_followed_artists()
+    if not spotify_artists:
+        print("No artists followed on Spotify.")
+        return
+
+    print(f"Found {len(spotify_artists)} artists followed on Spotify.")
+
+    # Load existing followed artists from Tidal
+    tidal_artists = tidal_session.user.favorites.artists()
+    tidal_artist_names = set([normalize(artist.name.lower()) for artist in tidal_artists])
+
+    # Filter new artists that are not already followed on Tidal
+    new_artists = [artist for artist in spotify_artists if normalize(artist['name'].lower()) not in tidal_artist_names]
+
+    if not new_artists:
+        print("All followed artists are already in Tidal.")
+        return
+
+    # Add new artists to Tidal
+    print(f"Searching and adding {len(new_artists)} new artists to Tidal.")
+    for spotify_artist in tqdm(new_artists, desc="Adding new artists to Tidal"):
+        try:
+            search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
+            tidal_candidates = search_results.get('artists', [])
+            if not tidal_candidates:
+                print(f"No Tidal matches found for artist '{spotify_artist['name']}'.")
+                continue
+            matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
+            if matched_artist:
+                tidal_session.user.favorites.add_artist(matched_artist.id)
+                print(f"Added artist '{spotify_artist['name']}' to Tidal.")
+            else:
+                print(f"Artist '{spotify_artist['name']}' could not be found on Tidal.")
+        except Exception as e:
+            print(f"Failed to add artist '{spotify_artist['name']}' to Tidal: {e}")
+
+    print("Artist synchronization complete.")
+
+async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """Synchronize user-saved albums from Spotify to Tidal."""
+    print("Loading saved albums from Spotify")
+
+    # Get all saved albums from Spotify
+    def _get_saved_albums(offset=0):
+        return spotify_session.current_user_saved_albums(offset=offset)
+
+    # Fetch all saved albums from Spotify
+    results = await repeat_on_request_error(_fetch_all_from_spotify_in_chunks, _get_saved_albums, item_key="album")
+    albums = [item for item in results]
+
+    print(f"Found {len(albums)} albums saved on Spotify")
+
+    # Get existing saved albums from Tidal
+    tidal_albums = tidal_session.user.favorites.albums()
+    tidal_album_names = set([normalize(album.name.lower()) for album in tidal_albums])
+
+    # Filter new albums to add to Tidal
+    new_albums = [album for album in albums if normalize(album['name'].lower()) not in tidal_album_names]
+
+    if not new_albums:
+        print("All saved albums are already in Tidal.")
+        return
+
+
+    # Function to search for an album on Tidal
+    async def search_album_on_tidal(spotify_album, tidal_session):
+        """Search for an album on Tidal using UPC first, and fallback to other attributes."""
+        try:
+            # Check if Spotify album has a UPC
+            upc = spotify_album.get("external_ids", {}).get("upc")
+            if upc:
+                # Search for album using UPC
+                search_results = tidal_session.get_albums_by_barcode(upc)
+                for tidal_album in search_results:
+                    if(tidal_album.universal_product_number == upc):
+                        return tidal_album
+        except Exception:
+            #print(f"No album found with UPC: {upc}")
+            pass
+
+        try:
+            # Fallback to extended search with query
+            artist_name = spotify_album['artists'][0]['name'] if spotify_album['artists'] else ""
+            query = f"{spotify_album['name']} {artist_name}"
+
+            search_results = tidal_session.search(query, models=[tidalapi.album.Album])
+            if search_results and 'albums' in search_results:
+                for tidal_album in search_results['albums']:
+                    if album_match(tidal_album, spotify_album):
+                        return tidal_album  # Best match found
+        except Exception as e:
+            print(f"Error searching for album '{spotify_album['name']}' on Tidal: {e}")
+        return None
+
+    # Add new albums to Tidal
+    for album in tqdm(new_albums, desc="Adding new albums to Tidal"):
+        try:
+            tidal_album = await search_album_on_tidal(album, tidal_session)
+            if tidal_album:
+                tidal_session.user.favorites.add_album(tidal_album.id)
+            else:
+                print(f"Album '{album['name']}' not found on Tidal.")
+        except Exception as e:
+            print(f"Failed to add album '{album['name']}' to Tidal: {e}")
+
+    print("Album synchronization complete.")
+
+
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
@@ -349,6 +540,12 @@ def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tida
 
 def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
+
+def sync_artists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    asyncio.run(sync_artists(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
+
+def sync_albums_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    asyncio.run(sync_albums(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
 
 def get_tidal_playlists_wrapper(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     tidal_playlists = asyncio.run(get_all_playlists(tidal_session.user))
