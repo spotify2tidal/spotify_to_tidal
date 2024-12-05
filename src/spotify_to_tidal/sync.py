@@ -290,15 +290,7 @@ def album_match(tidal_album, spotify_album, threshold=0.6):
         normalize(artist.name.lower()) == normalize(spotify_album['artists'][0]['name'].lower())
         for artist in tidal_album.artists
     )
-    #year_match = (
-    #    "release_date" in spotify_album
-    #    and tidal_album.release_date
-    #    and spotify_album["release_date"].split("-")[0] == tidal_album.release_date.strftime("%Y")
-    #)
     track_count_match = tidal_album.num_tracks == spotify_album.get("total_tracks", -1)
-    # Return true if codes match, or if other attributes (name, artist, year, track count) are a match
-    #print(f" Name match: {name_match}, Artist match: {artist_match}, Year match: {year_match}, Track count match: {track_count_match}")
-    #return name_match and artist_match and year_match and track_count_match
     return name_match and artist_match and track_count_match
 
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
@@ -383,33 +375,6 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
             after = response['artists']['cursors']['after']
 
         return followed_artists
-
-    async def search_artist_on_tidal(artist_name: str):
-        """Search for an artist on Tidal by name."""
-        try:
-            search_results = tidal_session.search(artist_name, models=[tidalapi.artist.Artist])
-            return search_results.get('artists', [])
-        except Exception as e:
-            print(f"Error searching for artist '{artist_name}' on Tidal: {e}")
-            return []
-
-    async def get_top_albums_from_spotify(artist_id: str) -> List[dict]:
-        """Fetch the top 5 albums of a Spotify artist."""
-        try:
-            albums = spotify_session.artist_albums(artist_id, album_type="album,single", limit=5)['items']
-            return albums
-        except Exception as e:
-            print(f"Error fetching top albums for Spotify artist ID {artist_id}: {e}")
-            return []
-
-    async def get_top_tracks_from_spotify(artist_id: str) -> List[dict]:
-        """Fetch the top 5 tracks of a Spotify artist."""
-        try:
-            tracks = spotify_session.artist_top_tracks(artist_id)['tracks'][:5]
-            return tracks
-        except Exception as e:
-            print(f"Error fetching top tracks for Spotify artist ID {artist_id}: {e}")
-            return []
     
     async def find_tidal_track_by_spotify_track(spotify_track: dict, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
         """Find a Tidal track that matches a Spotify track."""
@@ -444,43 +409,20 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
         return None
 
 
-    async def match_artist_with_tracks(spotify_artist: dict, tidal_candidates: List[tidalapi.artist.Artist]):
+    async def match_artist_with_tidal_tracks(spotify_artist: dict, tidal_candidates: List[tidalapi.artist.Artist]):
         """Match a Spotify artist with Tidal artists using their top tracks."""
-        top_tracks = await get_top_tracks_from_spotify(spotify_artist['id'])
+        top_tracks = spotify_session.artist_top_tracks(spotify_artist['id'])['tracks'][:5]
         if not top_tracks:
             print(f"No top tracks found for Spotify artist {spotify_artist['name']}.")
             return None
 
         for tidal_artist in tidal_candidates:
             for track in top_tracks:
-                #print(f"Searching for track '{track['name']}' by artist '{spotify_artist['name']}' on Tidal.")
                 tidal_track = await find_tidal_track_by_spotify_track(track, tidal_session)
                 if tidal_track and tidal_artist.id in [a.id for a in tidal_track.artists]:
-                    #print(f"Matched artist '{spotify_artist['name']}' with '{tidal_artist.name}' on Tidal using track '{track['name']}'.")
                     return tidal_artist
 
         return None
-
-    async def match_artist_on_tidal(spotify_artist: dict, tidal_candidates: List[tidalapi.artist.Artist]):
-        """Match a Spotify artist with Tidal artists using their albums and fallback to tracks."""
-        top_albums = await get_top_albums_from_spotify(spotify_artist['id'])
-        if not top_albums:
-            print(f"No albums found for Spotify artist {spotify_artist['name']}.")
-            return None
-
-        # Try to match using albums
-        for tidal_artist in tidal_candidates:
-            for album in top_albums:
-                search_results = tidal_session.search(album['name'], models=[tidalapi.album.Album])
-                tidal_albums = search_results.get('albums', [])
-                for tidal_album in tidal_albums:
-                    if album_match(tidal_album, album) and tidal_artist.id in [a.id for a in tidal_album.artists]:
-                        print(f"Matched artist '{spotify_artist['name']}' with '{tidal_artist.name}' on Tidal using album '{tidal_album.name}'.")
-                        return tidal_artist
-
-        # Fallback to track matching
-        #print(f"Falling back to track matching for artist '{spotify_artist['name']}'.")
-        return await match_artist_with_tracks(spotify_artist, tidal_candidates)
 
     # Fetch all followed artists from Spotify
     spotify_artists = await get_all_followed_artists()
@@ -505,11 +447,12 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
     print(f"Searching and adding {len(new_artists)} new artists to Tidal.")
     for spotify_artist in tqdm(new_artists, desc="Adding new artists to Tidal"):
         try:
-            tidal_candidates = await search_artist_on_tidal(spotify_artist['name'])
+            search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
+            tidal_candidates = search_results.get('artists', [])
             if not tidal_candidates:
                 print(f"No Tidal matches found for artist '{spotify_artist['name']}'.")
                 continue
-            matched_artist = await match_artist_on_tidal(spotify_artist, tidal_candidates)
+            matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
             if matched_artist:
                 tidal_session.user.favorites.add_artist(matched_artist.id)
                 print(f"Added artist '{spotify_artist['name']}' to Tidal.")
@@ -553,7 +496,6 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
             # Check if Spotify album has a UPC
             upc = spotify_album.get("external_ids", {}).get("upc")
             if upc:
-                #print(f"Searching Tidal for album using UPC: {upc}")
                 # Search for album using UPC
                 search_results = tidal_session.get_albums_by_barcode(upc)
                 for tidal_album in search_results:
@@ -568,7 +510,6 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
             artist_name = spotify_album['artists'][0]['name'] if spotify_album['artists'] else ""
             query = f"{spotify_album['name']} {artist_name}"
 
-            #print(f"Searching Tidal for album using query: {query}")
             search_results = tidal_session.search(query, models=[tidalapi.album.Album])
             if search_results and 'albums' in search_results:
                 for tidal_album in search_results['albums']:
@@ -583,7 +524,6 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
         try:
             tidal_album = await search_album_on_tidal(album, tidal_session)
             if tidal_album:
-                #print(f"Found album '{album['name']}' on Tidal.")
                 tidal_session.user.favorites.add_album(tidal_album.id)
             else:
                 print(f"Album '{album['name']}' not found on Tidal.")
