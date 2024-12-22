@@ -384,26 +384,20 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
 
         # Search by ISRC
         if isrc:
-            try:
-                isrc_results = tidal_session.get_tracks_by_isrc(isrc)
-                if isrc_results and "tracks" in isrc_results and isrc_results["tracks"]:
-                    for tidal_track in isrc_results["tracks"]:
-                        if isrc_match(tidal_track, spotify_track):
-                            return tidal_track
-            except Exception as e:
-                print(f"Error searching by ISRC: {e}")
+            isrc_results = tidal_session.get_tracks_by_isrc(isrc)
+            if isrc_results and "tracks" in isrc_results and isrc_results["tracks"]:
+                for tidal_track in isrc_results["tracks"]:
+                    if isrc_match(tidal_track, spotify_track):
+                        return tidal_track
 
         #Fallback to song name and artist name
-        try:
-            query = f"{track_name} {artist_name}"
-            search_results = tidal_session.search(query, models=[tidalapi.media.Track])
+        query = f"{track_name} {artist_name}"
+        search_results = tidal_session.search(query, models=[tidalapi.media.Track])
+        if search_results and "tracks" in search_results:
+            for tidal_track in search_results["tracks"]:
+                if normalize(tidal_track.name) == normalize(track_name) and artist_match(tidal_track, spotify_track):
+                    return tidal_track
 
-            if search_results and "tracks" in search_results:
-                for tidal_track in search_results["tracks"]:
-                    if normalize(tidal_track.name) == normalize(track_name) and artist_match(tidal_track, spotify_track):
-                        return tidal_track
-        except Exception as e:
-            print(f"Error searching by song name and artist: {e}")
 
         # No match found
         return None
@@ -446,20 +440,17 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
     # Add new artists to Tidal
     print(f"Searching and adding {len(new_artists)} new artists to Tidal.")
     for spotify_artist in tqdm(new_artists, desc="Adding new artists to Tidal"):
-        try:
-            search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
-            tidal_candidates = search_results.get('artists', [])
-            if not tidal_candidates:
-                print(f"No Tidal matches found for artist '{spotify_artist['name']}'.")
-                continue
-            matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
-            if matched_artist:
-                tidal_session.user.favorites.add_artist(matched_artist.id)
-                print(f"Added artist '{spotify_artist['name']}' to Tidal.")
-            else:
-                print(f"Artist '{spotify_artist['name']}' could not be found on Tidal.")
-        except Exception as e:
-            print(f"Failed to add artist '{spotify_artist['name']}' to Tidal: {e}")
+        search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
+        tidal_candidates = search_results.get('artists', [])
+        if not tidal_candidates:
+            print(f"No Tidal matches found for artist '{spotify_artist['name']}'.")
+            continue
+        matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
+        if matched_artist:
+            tidal_session.user.favorites.add_artist(matched_artist.id)
+            print(f"Added artist '{spotify_artist['name']}' to Tidal.")
+        else:
+            print(f"Artist '{spotify_artist['name']}' could not be found on Tidal.")
 
     print("Artist synchronization complete.")
 
@@ -505,30 +496,23 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
             #print(f"No album found with UPC: {upc}")
             pass
 
-        try:
-            # Fallback to extended search with query
-            artist_name = spotify_album['artists'][0]['name'] if spotify_album['artists'] else ""
-            query = f"{spotify_album['name']} {artist_name}"
-
-            search_results = tidal_session.search(query, models=[tidalapi.album.Album])
-            if search_results and 'albums' in search_results:
-                for tidal_album in search_results['albums']:
-                    if album_match(tidal_album, spotify_album):
-                        return tidal_album  # Best match found
-        except Exception as e:
-            print(f"Error searching for album '{spotify_album['name']}' on Tidal: {e}")
-        return None
+        # Fallback to extended search with query
+        artist_name = spotify_album['artists'][0]['name'] if spotify_album['artists'] else ""
+        query = f"{spotify_album['name']} {artist_name}"
+        search_results = tidal_session.search(query, models=[tidalapi.album.Album])
+        if search_results and 'albums' in search_results:
+            for tidal_album in search_results['albums']:
+                if album_match(tidal_album, spotify_album):
+                    return tidal_album  # Best match found
+        print(f"No match found for album '{spotify_album['name']}' on Tidal.")
 
     # Add new albums to Tidal
     for album in tqdm(new_albums, desc="Adding new albums to Tidal"):
-        try:
-            tidal_album = await search_album_on_tidal(album, tidal_session)
-            if tidal_album:
-                tidal_session.user.favorites.add_album(tidal_album.id)
-            else:
-                print(f"Album '{album['name']}' not found on Tidal.")
-        except Exception as e:
-            print(f"Failed to add album '{album['name']}' to Tidal: {e}")
+        tidal_album = await search_album_on_tidal(album, tidal_session)
+        if tidal_album:
+            tidal_session.user.favorites.add_album(tidal_album.id)
+        else:
+            print(f"Album '{album['name']}' not found on Tidal.")
 
     print("Album synchronization complete.")
 
