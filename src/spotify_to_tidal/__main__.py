@@ -29,10 +29,12 @@ def main():
         sync_favorites = args.sync_favorites # only sync favorites if command line argument explicitly passed
     elif args.sync_favorites:
         sync_favorites = True # sync only the favorites
-    elif config.get('sync_playlists', None):
-        # if the config contains a sync_playlists list of mappings then use that
-        _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_playlists_from_config(spotify_session, tidal_session, config), config)
-        sync_favorites = args.sync_favorites is None and config.get('sync_favorites_default', True)
+    elif entries:=config.get('sync_playlists', None):
+        if isinstance(entries, list):
+            # if the config contains a sync_playlists list of mappings then use that
+            playlist_map =  _sync.get_playlists_from_config(spotify_session, tidal_session, entries)
+            _sync.sync_playlists_wrapper(spotify_session, tidal_session, playlist_map, config)
+            sync_favorites = args.sync_favorites is None and config.get('sync_favorites_default', True)
     else:
         # otherwise sync all the user playlists in the Spotify account and favorites unless explicitly disabled
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config)
