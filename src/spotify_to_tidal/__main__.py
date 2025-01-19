@@ -51,8 +51,6 @@ def main():
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_user_playlist_mappings(spotify_session, tidal_session, config), config, to='tidal')
 
     if sync_favorites:
-        print("Should not sync")
-        exit(1)
         _sync.sync_favorites_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':
