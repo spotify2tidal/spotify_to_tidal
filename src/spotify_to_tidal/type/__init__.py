@@ -1,4 +1,4 @@
-from .config import SpotifyConfig, TidalConfig, PlaylistConfig, SyncConfig
+from .config import SpotifyConfig, TidalConfig, PlaylistConfig, SyncConfig, PlaylistIDTuple, PlaylistConfigTuple
 from .spotify import SpotifyTrack
 from typing import TypeAlias
 from spotipy import Spotify
@@ -11,15 +11,16 @@ TidalTrack: TypeAlias = Track
 SpotifySession: TypeAlias = Spotify
 
 __all__ = [
-    "SpotifyConfig",
-    "TidalConfig",
     "PlaylistConfig",
-    "SyncConfig",
-    "TidalPlaylist",
-    "TidalID",
+    "PlaylistConfigTuple",
+    "PlaylistIDTuple",
+    "SpotifyConfig",
     "SpotifyID",
     "SpotifySession",
+    "SpotifyTrack",
+    "SyncConfig",
+    "TidalID",
+    "TidalConfig",
     "TidalSession",
     "TidalTrack",
-    "SpotifyTrack",
 ]
