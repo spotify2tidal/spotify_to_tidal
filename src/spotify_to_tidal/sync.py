@@ -21,7 +21,7 @@ from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
 
 from .cache import failure_cache, track_match_cache
-from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
+from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks as get_all_tidal_playlist_tracks
 from .type import PlaylistIDTuple, spotify as t_spotify, PlaylistConfigTuple
 
 def normalize(s) -> str:
@@ -302,7 +302,7 @@ def get_tracks_for_new_spotify_playlist(tidal_tracks: Sequence[tidalapi.Track]) 
         if tidal_id:
             if tidal_id in seen_tracks:
                 track_name = tidal_track.name
-                artist_names = ', '.join([artist['name'] for artist in tidal_track.artists])
+                artist_names = ', '.join([artist.name for artist in tidal_track.artists])
                 print(f'Duplicate found: Track "{track_name}" by {artist_names} will be ignored') 
             else:
                 output.append(tidal_id)
@@ -381,13 +381,27 @@ async def search_new_tracks_on_spotify(spotify_session: spotipy.Spotify, tidal_t
         if search_results[idx]:
             track_match_cache.insert( (tidal_track.id, search_results[idx]['id']) )
         else:
-            song404.append(f"{tidal_track.id}: {','.join([a['name'] for a in tidal_track.artists])} - {tidal_track.name}")
+            song404.append(f"{tidal_track.id}: {','.join([a.name for a in tidal_track.artists])} - {tidal_track.name}")
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find the track " + song404[-1] + color[1])
     file_name = "songs not found.txt"
     with open(file_name, "a", encoding="utf-8") as file:
         for song in song404:
             file.write(f"{song}\n")
+
+async def get_all_spotify_playlist_tracks(spotify_session: spotipy.Spotify, pid: str) -> list[t_spotify.SpotifyTrack]:
+    ret = []
+    offset = 0
+    limit = 50
+    tracks =  spotify_session.playlist_tracks(pid, offset=offset, limit=limit)
+    offset += limit
+    ret.extend(map(lambda x: x['track'], tracks['items']))
+    while tracks['next']:
+        tracks =  spotify_session.playlist_tracks(pid, offset=offset, limit=limit)
+        offset += limit
+        ret.extend(map(lambda x: x['track'], tracks['items']))
+    return ret
+
 
             
 async def sync_tidal_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
@@ -397,7 +411,7 @@ async def sync_tidal_playlist(spotify_session: spotipy.Spotify, tidal_session: t
     if len(spotify_tracks) == 0:
         return # nothing to do
     if tidal_playlist:
-        old_tidal_tracks = await get_all_playlist_tracks(tidal_playlist)
+        old_tidal_tracks = await get_all_tidal_playlist_tracks(tidal_playlist)
     else:
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
@@ -428,7 +442,7 @@ async def sync_spotify_playlist(spotify_session: spotipy.Spotify, tidal_session:
     if len(tidal_tracks) == 0:
         return # nothing to do
     if spotify_playlist:
-        old_spotify_tracks = await get_all_playlist_tracks(tidal_playlist)
+        old_spotify_tracks = await get_all_spotify_playlist_tracks(spotify_session, spotify_playlist['id'])
     else:
         print(f"No playlist found on Spotify corresponding to Tidal playlist: '{tidal_playlist.name}', creating new playlist")
         user: dict = spotify_session.current_user()
@@ -439,7 +453,6 @@ async def sync_spotify_playlist(spotify_session: spotipy.Spotify, tidal_session:
             collaborative=False,
             description=tidal_playlist.description
         )
-        spotify_playlist = spotify_playlist['id']
         old_spotify_tracks = []
 
     # Extract the new tracks from the playlist that we haven't already seen before
@@ -454,13 +467,15 @@ async def sync_spotify_playlist(spotify_session: spotipy.Spotify, tidal_session:
     # Update the Tidal playlist if there are changes
     old_spotify_tracks_ids: list[str] = [t['id'] for t in old_spotify_tracks]
     if new_spotify_track_ids == old_spotify_tracks:
-        print("No changes to write to Tidal playlist")
+        print("No changes to write to Spotify playlist")
     elif new_spotify_track_ids[:len(old_spotify_tracks_ids)] == old_spotify_tracks_ids:
+        diff_list = new_spotify_track_ids[len(old_spotify_tracks_ids):]
         # Append new tracks to the existing playlist if possible
-        spotify_session.playlist_add_items(spotify_playlist, new_spotify_track_ids[len(old_spotify_tracks_ids):])
+        for i in range(0, len(diff_list), 50 ):
+            spotify_session.playlist_add_items(spotify_playlist['id'],diff_list[i:i+50])
     else:
         # Erase old playlist and add new tracks from scratch if any reordering occured
-        spotify_session.playlist_replace_items(spotify_playlist, new_spotify_track_ids )
+        spotify_session.playlist_replace_items(spotify_playlist['id'], new_spotify_track_ids )
 
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
