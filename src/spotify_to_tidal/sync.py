@@ -410,3 +410,62 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
         output.append((spotify_playlist, tidal_playlist))
     return output
 
+#NEW IMPLEMENTATION
+
+# Add to sync.py
+
+async def get_albums_from_spotify(spotify_session: spotipy.Spotify) -> List[dict]:
+    async def _get_saved_albums():
+        def _get_albums(offset: int):
+            return spotify_session.current_user_saved_albums(limit=50, offset=offset)
+        
+        # Create a custom fetching function for albums
+        async def fetch_all_albums(fetch_function: Callable) -> List[dict]:
+            output = []
+            results = fetch_function(0)
+            output.extend(results['items'])
+
+            if results['next']:
+                offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
+                extra_results = await atqdm.gather(
+                    *[asyncio.to_thread(fetch_function, offset) for offset in offsets],
+                    desc="Fetching additional album chunks"
+                )
+                for extra_result in extra_results:
+                    output.extend(extra_result['items'])
+
+            return output
+
+        return await repeat_on_request_error(fetch_all_albums, _get_albums)
+    
+    print("Loading saved albums from Spotify")
+    return await _get_saved_albums()
+
+async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """Sync saved albums from Spotify to Tidal"""
+    
+    print("Loading albums from Spotify")
+    spotify_albums = await get_albums_from_spotify(spotify_session)
+    
+    print(f"Found {len(spotify_albums)} albums to sync")
+    
+    for album_item in tqdm(spotify_albums, desc="Syncing albums"):
+        album = album_item['album']  # The album data is nested under 'album' key
+        # Search for album on Tidal
+        query = f"{simple(album['name'])} {simple(album['artists'][0]['name'])}"
+        search_results = tidal_session.search(query, models=[tidalapi.album.Album])
+        
+        # Check each result for a match
+        for tidal_album in search_results['albums']:
+            if test_album_similarity(album, tidal_album):
+                try:
+                    # Add album to Tidal favorites
+                    tidal_session.user.favorites.add_album(tidal_album.id)
+                    print(f"Added album: {tidal_album.name}")
+                    break
+                except Exception as e:
+                    print(f"Failed to add album {tidal_album.name}: {str(e)}")
+
+def sync_albums_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """Wrapper function to run album sync"""
+    asyncio.run(sync_albums(spotify_session, tidal_session, config))
