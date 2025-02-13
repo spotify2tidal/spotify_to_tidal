@@ -11,7 +11,7 @@ __all__ = [
     'open_tidal_session'
 ]
 
-SPOTIFY_SCOPES = 'playlist-read-private, user-library-read'
+SPOTIFY_SCOPES = 'playlist-read-private, user-library-read, playlist-modify-private, playlist-modify-public'
 
 def open_spotify_session(config) -> spotipy.Spotify:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
@@ -24,7 +24,7 @@ def open_spotify_session(config) -> spotipy.Spotify:
     try:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
-        sys.exit("Error opening Spotify sesion; could not get token for username: ".format(config['username']))
+        sys.exit(f"Error opening Spotify session; could not get token for username: {config['username']}")
 
     return spotipy.Spotify(oauth_manager=credentials_manager)
 
