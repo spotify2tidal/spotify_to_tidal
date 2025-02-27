@@ -99,6 +99,12 @@ def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
     return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+    def _search_for_isrc_track():
+        if "isrc" in spotify_track["external_ids"]:
+            for track in tidal_session.get_tracks_by_isrc(spotify_track["external_ids"]["isrc"]):
+                failure_cache.remove_match_failure(spotify_track['id'])
+                return track
+
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
@@ -122,6 +128,10 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
             if match(track, spotify_track):
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
+    await rate_limiter.acquire()
+    isrc_search = await asyncio.to_thread( _search_for_isrc_track )
+    if isrc_search:
+        return isrc_search
     await rate_limiter.acquire()
     album_search = await asyncio.to_thread( _search_for_track_in_album )
     if album_search:
@@ -239,7 +249,7 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
             if tidal_id in seen_tracks:
                 track_name = spotify_track['name']
                 artist_names = ', '.join([artist['name'] for artist in spotify_track['artists']])
-                print(f'Duplicate found: Track "{track_name}" by {artist_names} will be ignored') 
+                print(f'Duplicate found: Track "{track_name}" by {artist_names} will be ignored')
             else:
                 output.append(tidal_id)
                 seen_tracks.add(tidal_id)
@@ -285,7 +295,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         for song in song404:
             file.write(f"{song}\n")
 
-            
+
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
     # Get the tracks from both Spotify and Tidal, creating a new Tidal playlist if necessary
@@ -319,7 +329,7 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
     async def get_tracks_from_spotify_favorites() -> List[dict]:
-        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
+        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)
         tracks = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, _get_favorite_tracks)
         tracks.reverse()
         return tracks
@@ -413,4 +423,3 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
             raise e
         output.append((spotify_playlist, tidal_playlist))
     return output
-
