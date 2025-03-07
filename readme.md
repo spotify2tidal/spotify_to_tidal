@@ -19,6 +19,7 @@ Setup
 Usage
 ----
 To synchronize all of your Spotify playlists with your Tidal account run the following from the project root directory
+Windows ignores python module paths by default, but you can run them using `python3 -m spotify_to_tidal`
 
 ```bash
 spotify_to_tidal
