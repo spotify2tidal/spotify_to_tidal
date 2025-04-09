@@ -23,7 +23,7 @@ def test_open_spotify_session(mocker):
         "username": "test_user",
         "client_id": "test_client_id",
         "client_secret": "test_client_secret",
-        "redirect_uri": "http://localhost/",
+        "redirect_uri": "http://127.0.0.1/",
         "open_browser": True,
     }
 
@@ -40,7 +40,7 @@ def test_open_spotify_session(mocker):
         scope=SPOTIFY_SCOPES,
         client_id="test_client_id",
         client_secret="test_client_secret",
-        redirect_uri="http://localhost/",
+        redirect_uri="http://127.0.0.1/",
         requests_timeout=2,
         open_browser=True,
     )
@@ -64,7 +64,7 @@ def test_open_spotify_session_oauth_error(mocker):
         "username": "test_user",
         "client_id": "test_client_id",
         "client_secret": "test_client_secret",
-        "redirect_uri": "http://localhost/",
+        "redirect_uri": "http://127.0.0.1/",
     }
 
     # Mock sys.exit to prevent the test from exiting
