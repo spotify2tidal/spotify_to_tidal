@@ -63,7 +63,7 @@ async def get_all_favorites(favorites: tidalapi.Favorites, order: str = "NAME", 
 
 async def get_all_playlists(user: tidalapi.User, chunk_size: int=10) -> List[tidalapi.Playlist]:
     """ Get all user playlists from Tidal in chunks """
-    print(f"Loading playlists from Tidal user")
+    print("Loading playlists from Tidal user")
     params = {
         "limit": chunk_size,
     }
