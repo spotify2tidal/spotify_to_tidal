@@ -2,7 +2,7 @@ spotify:
   client_id: your_client_id
   client_secret: your_client_secret
   username: your_spotify_username
-  redirect_uri: http://localhost:8888/callback
+  redirect_uri: http://127.0.0.1:8888/callback
   open_browser: True # Set to False if using a headless server environment
 
 
