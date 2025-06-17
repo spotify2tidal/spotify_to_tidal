@@ -38,15 +38,15 @@ def duration_match(tidal_track: tidalapi.Track, spotify_track, tolerance=2) -> b
     return abs(tidal_track.duration - spotify_track['duration_ms']/1000) < tolerance
 
 def name_match(tidal_track, spotify_track) -> bool:
-    def exclusion_rule(pattern: str, tidal_track: tidalapi.Track, spotify_track: t_spotify.SpotifyTrack):
-        spotify_has_pattern = pattern in spotify_track['name'].lower()
-        tidal_has_pattern = pattern in tidal_track.name.lower() or (not tidal_track.version is None and (pattern in tidal_track.version.lower()))
-        return spotify_has_pattern != tidal_has_pattern
+    # Get tidal name including version info for exclusion checks
+    tidal_name_with_version = tidal_track.name
+    if tidal_track.version is not None:
+        tidal_name_with_version += " " + tidal_track.version
 
-    # handle some edge cases
-    if exclusion_rule("instrumental", tidal_track, spotify_track): return False
-    if exclusion_rule("acapella", tidal_track, spotify_track): return False
-    if exclusion_rule("remix", tidal_track, spotify_track): return False
+    # handle some edge cases using shared exclusion rule
+    if _exclusion_rule("instrumental", tidal_name_with_version, spotify_track['name']): return False
+    if _exclusion_rule("acapella", tidal_name_with_version, spotify_track['name']): return False
+    if _exclusion_rule("remix", tidal_name_with_version, spotify_track['name']): return False
 
     # the simplified version of the Spotify track name must be a substring of the Tidal track name
     # Try with both un-normalized and then normalized
@@ -87,23 +87,35 @@ def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
         return True
     return get_tidal_artists(tidal, True).intersection(get_spotify_artists(spotify, True)) != set()
 
-def match(tidal_track, spotify_track) -> bool:
+def match(tidal_track, spotify_track, atmos: bool = False) -> bool:
     if not spotify_track['id']: return False
-    return isrc_match(tidal_track, spotify_track) or (
-        duration_match(tidal_track, spotify_track)
-        and name_match(tidal_track, spotify_track)
-        and artist_match(tidal_track, spotify_track)
-    )
+    
+    # For Atmos tracks, adjust matching criteria
+    if atmos:
+        duration_tolerance = 5  # Allow up to 5 seconds difference for Atmos tracks
+        return isrc_match(tidal_track, spotify_track) or (
+            duration_match(tidal_track, spotify_track, tolerance=duration_tolerance)
+            and _name_match_atmos(tidal_track, spotify_track)
+            and artist_match(tidal_track, spotify_track)
+        )
+    else:
+        return isrc_match(tidal_track, spotify_track) or (
+            duration_match(tidal_track, spotify_track)
+            and name_match(tidal_track, spotify_track)
+            and artist_match(tidal_track, spotify_track)
+        )
 
 def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
     return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
-async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session, atmos: bool = False) -> tidalapi.Track | None:
+    spotify_info = f"{', '.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}"
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
             query = simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name'])
             album_result = tidal_session.search(query, models=[tidalapi.album.Album])
+            
             for album in album_result['albums']:
                 if album.num_tracks >= spotify_track['track_number'] and test_album_similarity(spotify_track['album'], album):
                     album_tracks = album.tracks()
@@ -111,21 +123,55 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
                         assert( not len(album_tracks) == album.num_tracks ) # incorrect metadata :(
                         continue
                     track = album_tracks[spotify_track['track_number'] - 1]
-                    if match(track, spotify_track):
+                    
+                    match_result = match(track, spotify_track, atmos)
+                    if match_result:
                         failure_cache.remove_match_failure(spotify_track['id'])
+                        # If this is an Atmos track and atmos was requested, log it
+                        if atmos:
+                            is_dolby_atmos = getattr(track, 'is_DolbyAtmos', False)
+                            if is_dolby_atmos:
+                                artist_name = ', '.join([artist.name for artist in track.artists])
+                                _log_atmos_found(track.name, artist_name)
                         return track
 
     def _search_for_standalone_track():
         # if album search fails then search for track name and first artist
         query = simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name'])
-        for track in tidal_session.search(query, models=[tidalapi.media.Track])['tracks']:
-            if match(track, spotify_track):
+        search_results = tidal_session.search(query, models=[tidalapi.media.Track])['tracks']
+        
+        # If atmos is requested, first try to find an Atmos track
+        if atmos:
+            for i, track in enumerate(search_results):
+                is_dolby_atmos = getattr(track, 'is_DolbyAtmos', False)
+                
+                
+                if is_dolby_atmos:
+                    match_result = match(track, spotify_track, atmos=True)
+                    if match_result:
+                        failure_cache.remove_match_failure(spotify_track['id'])
+                        # Log when we successfully find an Atmos track
+                        artist_name = ', '.join([artist.name for artist in track.artists])
+                        _log_atmos_found(track.name, artist_name)
+                        return track
+        
+        # Regular matching (either atmos=False or no Atmos tracks found)
+        for i, track in enumerate(search_results):
+            match_result = match(track, spotify_track, atmos)
+            if match_result:
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
+    # If atmos is requested, try searching for Atmos version first
+    if atmos:
+        atmos_result = await _search_for_atmos_track(spotify_track, rate_limiter, tidal_session)
+        if atmos_result:
+            return atmos_result
+    
     await rate_limiter.acquire()
     album_search = await asyncio.to_thread( _search_for_track_in_album )
     if album_search:
         return album_search
+    
     await rate_limiter.acquire()
     track_search = await asyncio.to_thread( _search_for_standalone_track )
     if track_search:
@@ -133,6 +179,47 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
 
     # if none of the search modes succeeded then store the track id to the failure cache
     failure_cache.cache_match_failure(spotify_track['id'])
+    return None
+
+async def _search_for_atmos_track(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+    """Search for Atmos version of a track by appending (Atmos) to the track name"""
+    
+    def _remove_trailing_parentheses(track_name: str) -> str:
+        """Remove text enclosed in parentheses at the end of the track name and remaster text between dashes"""
+        import re
+        
+        # First remove parentheses at the end of the string, including any whitespace before them
+        result = re.sub(r'\s*\([^)]*\)\s*$', '', track_name).strip()
+        
+        # Remove remaster text between dashes (case insensitive)
+        # This handles patterns like "Song - 2004 Remaster" or "Song - Part 1 - Remastered Version - Other"
+        # Only removes the dash segment that contains "remaster"
+        result = re.sub(r'\s*-\s*[^-]*remaster[^-]*\s*(?=-|\s*$)', '', result, flags=re.IGNORECASE)
+        
+        # Clean up any double spaces and trim
+        result = re.sub(r'\s+', ' ', result).strip()
+        
+        return result
+    
+    def _search_for_atmos_standalone_track():
+        # Remove trailing parentheses and append (Atmos)
+        clean_name = _remove_trailing_parentheses(spotify_track['name'])
+        atmos_query = clean_name + ' (Atmos) ' + simple(spotify_track['artists'][0]['name'])
+        
+        search_results = tidal_session.search(atmos_query, models=[tidalapi.media.Track])['tracks']
+        
+        for track in search_results:
+            match_result = match(track, spotify_track, atmos=True)
+            if match_result:
+                failure_cache.remove_match_failure(spotify_track['id'])
+                # Log when we successfully find an Atmos track
+                artist_name = ', '.join([artist.name for artist in track.artists])
+                _log_atmos_found(track.name, artist_name)
+                return track
+    
+    await rate_limiter.acquire()
+    atmos_search = await asyncio.to_thread(_search_for_atmos_standalone_track)
+    return atmos_search
 
 async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
@@ -191,18 +278,18 @@ async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spo
                                   and item['album']['artists'][0]['name'] is not None)
     return list(filter(sanity_filter, filter(track_filter, items)))
 
-def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
+def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track], atmos: bool = False):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
     def _populate_one_track_from_spotify(spotify_track: t_spotify.SpotifyTrack):
         for idx, tidal_track in list(enumerate(tidal_tracks)):
-            if tidal_track.available and match(tidal_track, spotify_track):
+            if tidal_track.available and match(tidal_track, spotify_track, atmos):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
                 tidal_tracks.pop(idx)
                 return
 
     def _populate_one_track_from_tidal(tidal_track: tidalapi.Track):
         for idx, spotify_track in list(enumerate(spotify_tracks)):
-            if tidal_track.available and match(tidal_track, spotify_track):
+            if tidal_track.available and match(tidal_track, spotify_track, atmos):
                 track_match_cache.insert((spotify_track['id'], tidal_track.id))
                 spotify_tracks.pop(idx)
                 return
@@ -245,7 +332,7 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
                 seen_tracks.add(tidal_id)
     return output
 
-async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tracks: Sequence[t_spotify.SpotifyTrack], playlist_name: str, config: dict):
+async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tracks: Sequence[t_spotify.SpotifyTrack], playlist_name: str, config: dict, atmos: bool = False):
     """ Generic function for searching for each item in a list of Spotify tracks which have not already been seen and adding them to the cache """
     async def _run_rate_limiter(semaphore):
         ''' Leaky bucket algorithm for rate limiting. Periodically releases items from semaphore at rate_limit'''
@@ -268,7 +355,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), playlist_name)
     semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
     rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
-    search_results = await atqdm.gather( *[ repeat_on_request_error(tidal_search, t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
+    search_results = await atqdm.gather( *[ repeat_on_request_error(tidal_search, t, semaphore, tidal_session, atmos) for t in tracks_to_search ], desc=task_description )
     rate_limiter_task.cancel()
 
     # Add the search results to the cache
@@ -286,7 +373,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
             file.write(f"{song}\n")
 
             
-async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
+async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict, atmos: bool = False):
     """ sync given playlist to tidal """
     # Get the tracks from both Spotify and Tidal, creating a new Tidal playlist if necessary
     spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
@@ -300,8 +387,8 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
         old_tidal_tracks = []
 
     # Extract the new tracks from the playlist that we haven't already seen before
-    populate_track_match_cache(spotify_tracks, old_tidal_tracks)
-    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, spotify_playlist['name'], config)
+    populate_track_match_cache(spotify_tracks, old_tidal_tracks, atmos)
+    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, spotify_playlist['name'], config, atmos)
     new_tidal_track_ids = get_tracks_for_new_tidal_playlist(spotify_tracks)
 
     # Update the Tidal playlist if there are changes
@@ -316,7 +403,7 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
         clear_tidal_playlist(tidal_playlist)
         add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids)
 
-async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict, atmos: bool = False):
     """ sync user favorites to tidal """
     async def get_tracks_from_spotify_favorites() -> List[dict]:
         _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
@@ -337,8 +424,8 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
     spotify_tracks = await get_tracks_from_spotify_favorites()
     print("Loading existing favorite tracks from Tidal")
     old_tidal_tracks = await get_all_favorites(tidal_session.user.favorites, order='DATE')
-    populate_track_match_cache(spotify_tracks, old_tidal_tracks)
-    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config)
+    populate_track_match_cache(spotify_tracks, old_tidal_tracks, atmos)
+    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config, atmos)
     new_tidal_favorite_ids = get_new_tidal_favorites()
     if new_tidal_favorite_ids:
         for tidal_id in tqdm(new_tidal_favorite_ids, desc="Adding new tracks to Tidal favorites"):
@@ -346,13 +433,13 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
     else:
         print("No new tracks to add to Tidal favorites")
 
-def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
+def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict, atmos: bool = False):
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
-    asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
+    asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config, atmos) )
 
-def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
-    asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
+def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config, atmos: bool = False):
+    asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config, atmos=atmos))
 
 def get_tidal_playlists_wrapper(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     tidal_playlists = asyncio.run(get_all_playlists(tidal_session.user))
@@ -413,4 +500,58 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
             raise e
         output.append((spotify_playlist, tidal_playlist))
     return output
+
+def _exclusion_rule(pattern: str, tidal_name: str, spotify_name: str) -> bool:
+    """Shared exclusion rule logic for track matching"""
+    spotify_has_pattern = pattern in spotify_name.lower()
+    tidal_has_pattern = pattern in tidal_name.lower()
+    return spotify_has_pattern != tidal_has_pattern
+
+def _log_atmos_found(track_name: str, artist_name: str):
+    """Log when an Atmos track is found with green console output"""
+    green_color = '\033[92m'
+    reset_color = '\033[0m'
+    print(f"{green_color}Found Atmos track: {artist_name} - {track_name}{reset_color}")
+
+def _name_match_atmos(tidal_track, spotify_track) -> bool:
+    """Special name matching for Atmos tracks that handles different Atmos naming conventions"""
+    def _remove_trailing_parentheses(track_name: str) -> str:
+        """Remove text enclosed in parentheses at the end of the track name"""
+        import re
+        pattern = r'\s*\([^)]*\)\s*$'
+        return re.sub(pattern, '', track_name).strip()
+    
+    def _remove_atmos_suffixes(track_name: str) -> str:
+        """Remove Atmos-related suffixes from track names"""
+        import re
+        # Remove common Atmos suffixes like (Atmos), (Atmos Mix), (Atmos Version), etc.
+        atmos_patterns = [
+            r'\s*\(Atmos[^)]*\)\s*$',
+            r'\s*\(Spatial Audio[^)]*\)\s*$'
+        ]
+        result = track_name
+        for pattern in atmos_patterns:
+            result = re.sub(pattern, '', result, flags=re.IGNORECASE).strip()
+        return result
+    
+    # Get the base name from Spotify (remove trailing parentheses)
+    spotify_base_name = _remove_trailing_parentheses(spotify_track['name'])
+    
+    # Get the base name from Tidal (remove Atmos suffixes)
+    tidal_base_name = _remove_atmos_suffixes(tidal_track.name)
+    
+    # Handle some edge cases using shared exclusion rule
+    if _exclusion_rule("instrumental", tidal_base_name, spotify_base_name): return False
+    if _exclusion_rule("acapella", tidal_base_name, spotify_base_name): return False
+    if _exclusion_rule("remix", tidal_base_name, spotify_base_name): return False
+
+    # Compare the simplified versions
+    simple_spotify_track = simple(spotify_base_name.lower()).split('feat.')[0].strip()
+    simple_tidal_track = simple(tidal_base_name.lower()).split('feat.')[0].strip()
+    
+    # Check if they match (both normalized and non-normalized)
+    return (simple_spotify_track in simple_tidal_track or 
+            simple_tidal_track in simple_spotify_track or
+            normalize(simple_spotify_track) in normalize(simple_tidal_track) or
+            normalize(simple_tidal_track) in normalize(simple_spotify_track))
 
