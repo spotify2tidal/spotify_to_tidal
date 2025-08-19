@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from functools import partial
 from typing import Callable, List, Sequence, Set, Mapping
 import math
+import re
 import requests
 import sys
 import spotipy
@@ -27,6 +28,21 @@ def normalize(s) -> str:
 def simple(input_string: str) -> str:
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
+
+def validate_and_format_isrc(isrc: str) -> str | None:
+    if not isrc or not isinstance(isrc, str):
+        return None
+
+    clean_isrc = isrc.replace('-', '').upper().strip()
+    
+    if len(clean_isrc) != 12:
+        return None
+    
+    if not re.match(r'^[A-Z]{2}[A-Z0-9]{3}\d{7}$', clean_isrc):
+        return None
+    
+    formatted_isrc = f"{clean_isrc[:5]}-{clean_isrc[5:7]}-{clean_isrc[7:12]}"
+    return formatted_isrc
 
 def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
     if "isrc" in spotify_track["external_ids"]:
@@ -384,11 +400,18 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
 
         # Search by ISRC
         if isrc:
-            isrc_results = tidal_session.get_tracks_by_isrc(isrc)
-            if isrc_results and "tracks" in isrc_results and isrc_results["tracks"]:
-                for tidal_track in isrc_results["tracks"]:
-                    if isrc_match(tidal_track, spotify_track):
-                        return tidal_track
+            formatted_isrc = validate_and_format_isrc(isrc)
+            if formatted_isrc:
+                try:
+                    isrc_results = tidal_session.get_tracks_by_isrc(formatted_isrc)
+                    if isrc_results and "tracks" in isrc_results and isrc_results["tracks"]:
+                        for tidal_track in isrc_results["tracks"]:
+                            if isrc_match(tidal_track, spotify_track):
+                                return tidal_track
+                except (requests.exceptions.HTTPError) as e:
+                    print(f"ISRC search failed for '{isrc}' (formatted as '{formatted_isrc}'): {e}")
+            else:
+                print(f"Invalid ISRC format: '{isrc}' - skipping ISRC search")
 
         #Fallback to song name and artist name
         query = f"{track_name} {artist_name}"
