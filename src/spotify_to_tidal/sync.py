@@ -12,6 +12,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
+from tidalapi.exceptions import InvalidISRC, ObjectNotFound
 from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
 import time
 from tqdm.asyncio import tqdm as atqdm
@@ -408,7 +409,11 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
                         for tidal_track in isrc_results["tracks"]:
                             if isrc_match(tidal_track, spotify_track):
                                 return tidal_track
-                except (requests.exceptions.HTTPError) as e:
+                except InvalidISRC as e:
+                    print(f"Invalid ISRC error for '{isrc}' (formatted as '{formatted_isrc}'): {e}")
+                except ObjectNotFound:
+                    print(f"No tracks found on Tidal for ISRC '{formatted_isrc}' - continuing with text search")
+                except requests.exceptions.HTTPError as e:
                     print(f"ISRC search failed for '{isrc}' (formatted as '{formatted_isrc}'): {e}")
             else:
                 print(f"Invalid ISRC format: '{isrc}' - skipping ISRC search")
