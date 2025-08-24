@@ -102,8 +102,9 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
     def _search_for_isrc_track():
         if "isrc" in spotify_track["external_ids"]:
             for track in tidal_session.get_tracks_by_isrc(spotify_track["external_ids"]["isrc"]):
-                failure_cache.remove_match_failure(spotify_track['id'])
-                return track
+                if match(track, spotify_track):
+                    failure_cache.remove_match_failure(spotify_track['id'])
+                    return track
 
     def _search_for_track_in_album():
         # search for album name and first album artist
