@@ -101,10 +101,13 @@ def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     def _search_for_isrc_track():
         if "isrc" in spotify_track["external_ids"]:
-            for track in tidal_session.get_tracks_by_isrc(spotify_track["external_ids"]["isrc"]):
-                if match(track, spotify_track):
-                    failure_cache.remove_match_failure(spotify_track['id'])
-                    return track
+            try:
+                for track in tidal_session.get_tracks_by_isrc(spotify_track["external_ids"]["isrc"]):
+                    if match(track, spotify_track):
+                        failure_cache.remove_match_failure(spotify_track['id'])
+                        return track
+            except tidalapi.exceptions.ObjectNotFound:
+                return None
 
     def _search_for_track_in_album():
         # search for album name and first album artist
