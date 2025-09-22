@@ -587,14 +587,31 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
         return None
 
     # Add new albums to Tidal
+    successful_adds = 0
+    failed_adds = []
+    
     for album in tqdm(new_albums, desc="Adding new albums to Tidal"):
-        tidal_album = await search_album_on_tidal(album, tidal_session)
-        if tidal_album:
-            tidal_session.user.favorites.add_album(tidal_album.id)
-        else:
-            print(f"Album '{album['name']}' not found on Tidal.")
-
-    print("Album synchronization complete.")
+        try:
+            tidal_album = await search_album_on_tidal(album, tidal_session)
+            if tidal_album:
+                try:
+                    result = tidal_session.user.favorites.add_album(tidal_album.id)
+                    if result is not False:
+                        successful_adds += 1
+                    else:
+                        failed_adds.append(album['name'])
+                except Exception:
+                    failed_adds.append(album['name'])
+                    continue
+            else:
+                failed_adds.append(album['name'])
+        except Exception:
+            failed_adds.append(album['name'])
+            continue
+    
+    print(f"Album synchronization complete. Successfully added: {successful_adds}, Failed: {len(failed_adds)}")
+    if failed_adds:
+        print(f"Failed albums: {failed_adds[:10]}{'...' if len(failed_adds) > 10 else ''}")
 
 
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
