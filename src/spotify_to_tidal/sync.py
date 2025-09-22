@@ -399,7 +399,7 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
         track_name = spotify_track.get("name", "").strip()
         artist_name = spotify_track.get("artists", [{}])[0].get("name", "").strip()
 
-        # Search by ISRC
+        # Search by ISRC first
         if isrc:
             formatted_isrc = validate_and_format_isrc(isrc)
             if formatted_isrc:
@@ -409,23 +409,23 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
                         for tidal_track in isrc_results["tracks"]:
                             if isrc_match(tidal_track, spotify_track):
                                 return tidal_track
-                except InvalidISRC as e:
-                    print(f"Invalid ISRC error for '{isrc}' (formatted as '{formatted_isrc}'): {e}")
+                except InvalidISRC:
+                    pass
                 except ObjectNotFound:
-                    print(f"No tracks found on Tidal for ISRC '{formatted_isrc}' - continuing with text search")
-                except requests.exceptions.HTTPError as e:
-                    print(f"ISRC search failed for '{isrc}' (formatted as '{formatted_isrc}'): {e}")
-            else:
-                print(f"Invalid ISRC format: '{isrc}' - skipping ISRC search")
+                    pass
+                except requests.exceptions.HTTPError:
+                    pass
 
-        #Fallback to song name and artist name
+        # Fallback to song name and artist name search
         query = f"{track_name} {artist_name}"
-        search_results = tidal_session.search(query, models=[tidalapi.media.Track])
-        if search_results and "tracks" in search_results:
-            for tidal_track in search_results["tracks"]:
-                if normalize(tidal_track.name) == normalize(track_name) and artist_match(tidal_track, spotify_track):
-                    return tidal_track
-
+        try:
+            search_results = tidal_session.search(query, models=[tidalapi.media.Track])
+            if search_results and "tracks" in search_results:
+                for tidal_track in search_results["tracks"]:
+                    if normalize(tidal_track.name) == normalize(track_name) and artist_match(tidal_track, spotify_track):
+                        return tidal_track
+        except Exception:
+            pass
 
         # No match found
         return None
