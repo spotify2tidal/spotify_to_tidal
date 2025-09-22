@@ -39,10 +39,10 @@ def validate_and_format_isrc(isrc: str) -> str | None:
     if len(clean_isrc) != 12:
         return None
     
-    if not re.match(r'^[A-Z]{2}[A-Z0-9]{3}\d{7}$', clean_isrc):
+    if not re.match(r'^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$', clean_isrc):
         return None
     
-    formatted_isrc = f"{clean_isrc[:5]}-{clean_isrc[5:7]}-{clean_isrc[7:12]}"
+    formatted_isrc = f"{clean_isrc[:2]}-{clean_isrc[2:5]}-{clean_isrc[5:7]}-{clean_isrc[7:12]}"
     return formatted_isrc
 
 def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
