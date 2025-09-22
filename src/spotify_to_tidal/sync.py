@@ -480,20 +480,42 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
 
     # Add new artists to Tidal
     print(f"Searching and adding {len(new_artists)} new artists to Tidal.")
+    failed_artists = []
     for spotify_artist in tqdm(new_artists, desc="Adding new artists to Tidal"):
-        search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
-        tidal_candidates = search_results.get('artists', [])
-        if not tidal_candidates:
-            print(f"No Tidal matches found for artist '{spotify_artist['name']}'.")
+        try:
+            search_results = tidal_session.search(spotify_artist['name'], models=[tidalapi.artist.Artist])
+            tidal_candidates = search_results.get('artists', [])
+            if not tidal_candidates:
+                failed_artists.append(spotify_artist['name'])
+                continue
+                
+            matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
+            if matched_artist:
+                try:
+                    tidal_session.user.favorites.add_artist(matched_artist.id)
+                    # Add delay between API calls to prevent rate limiting
+                    await asyncio.sleep(0.5)
+                except requests.exceptions.SSLError:
+                    print(f"SSL error adding artist '{spotify_artist['name']}'. Retrying after delay...")
+                    await asyncio.sleep(5)
+                    try:
+                        tidal_session.user.favorites.add_artist(matched_artist.id)
+                    except Exception:
+                        failed_artists.append(spotify_artist['name'])
+                        continue
+                except Exception:
+                    failed_artists.append(spotify_artist['name'])
+                    continue
+            else:
+                failed_artists.append(spotify_artist['name'])
+        except Exception:
+            failed_artists.append(spotify_artist['name'])
             continue
-        matched_artist = await match_artist_with_tidal_tracks(spotify_artist, tidal_candidates)
-        if matched_artist:
-            tidal_session.user.favorites.add_artist(matched_artist.id)
-            print(f"Added artist '{spotify_artist['name']}' to Tidal.")
-        else:
-            print(f"Artist '{spotify_artist['name']}' could not be found on Tidal.")
-
-    print("Artist synchronization complete.")
+    
+    if failed_artists:
+        print(f"Failed to add {len(failed_artists)} artists to Tidal.")
+    else:
+        print("Artist synchronization complete.")
 
 async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """Synchronize user-saved albums from Spotify to Tidal."""
