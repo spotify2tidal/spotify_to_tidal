@@ -410,10 +410,13 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
                             if isrc_match(tidal_track, spotify_track):
                                 return tidal_track
                 except InvalidISRC:
+                    # Silently continue with text search for invalid ISRC
                     pass
                 except ObjectNotFound:
+                    # Silently continue with text search when ISRC not found
                     pass
                 except requests.exceptions.HTTPError:
+                    # Silently continue with text search for HTTP errors
                     pass
 
         # Fallback to song name and artist name search
