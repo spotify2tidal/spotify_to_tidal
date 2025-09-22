@@ -536,10 +536,23 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
 
     # Get existing saved albums from Tidal
     tidal_albums = tidal_session.user.favorites.albums()
-    tidal_album_names = set([normalize(album.name.lower()) for album in tidal_albums])
+    tidal_album_keys = set()
+    for tidal_album in tidal_albums:
+        if hasattr(tidal_album, 'artists') and tidal_album.artists:
+            artist_name = tidal_album.artists[0].name
+        else:
+            artist_name = ""
+        key = (normalize(tidal_album.name.lower()), normalize(artist_name.lower()))
+        tidal_album_keys.add(key)
 
     # Filter new albums to add to Tidal
-    new_albums = [album for album in albums if normalize(album['name'].lower()) not in tidal_album_names]
+    def is_album_not_in_tidal(spotify_album):
+        spotify_name = normalize(spotify_album['name'].lower())
+        spotify_artist = normalize(spotify_album['artists'][0]['name'].lower()) if spotify_album['artists'] else ""
+        spotify_key = (spotify_name, spotify_artist)
+        return spotify_key not in tidal_album_keys
+
+    new_albums = [album for album in albums if is_album_not_in_tidal(album)]
 
     if not new_albums:
         print("All saved albums are already in Tidal.")
