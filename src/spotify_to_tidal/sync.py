@@ -546,18 +546,18 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
     # Function to search for an album on Tidal
     async def search_album_on_tidal(spotify_album, tidal_session):
         """Search for an album on Tidal using UPC first, and fallback to other attributes."""
-        try:
-            # Check if Spotify album has a UPC
-            upc = spotify_album.get("external_ids", {}).get("upc")
-            if upc:
+        # Check if Spotify album has a UPC
+        upc = spotify_album.get("external_ids", {}).get("upc")
+        if upc:
+            try:
                 # Search for album using UPC
                 search_results = tidal_session.get_albums_by_barcode(upc)
                 for tidal_album in search_results:
                     if(tidal_album.universal_product_number == upc):
                         return tidal_album
-        except Exception:
-            #print(f"No album found with UPC: {upc}")
-            pass
+            except ObjectNotFound:
+                # UPC not found, continue with text search
+                pass
 
         # Fallback to extended search with query
         artist_name = spotify_album['artists'][0]['name'] if spotify_album['artists'] else ""
@@ -567,7 +567,8 @@ async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.
             for tidal_album in search_results['albums']:
                 if album_match(tidal_album, spotify_album):
                     return tidal_album  # Best match found
-        print(f"No match found for album '{spotify_album['name']}' on Tidal.")
+        
+        return None
 
     # Add new albums to Tidal
     for album in tqdm(new_albums, desc="Adding new albums to Tidal"):
