@@ -33,3 +33,6 @@ dmypy.json
 
 # Visual Studio Code
 .vscode/
+logs/**
+songs not found.txt
+.DS_Store
