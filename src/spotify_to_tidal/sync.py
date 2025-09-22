@@ -433,18 +433,31 @@ async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi
 
     async def match_artist_with_tidal_tracks(spotify_artist: dict, tidal_candidates: List[tidalapi.artist.Artist]):
         """Match a Spotify artist with Tidal artists using their top tracks."""
-        top_tracks = spotify_session.artist_top_tracks(spotify_artist['id'])['tracks'][:5]
-        if not top_tracks:
-            print(f"No top tracks found for Spotify artist {spotify_artist['name']}.")
-            return None
-
+        # First try exact name match to avoid unnecessary API calls
         for tidal_artist in tidal_candidates:
-            for track in top_tracks:
-                tidal_track = await find_tidal_track_by_spotify_track(track, tidal_session)
-                if tidal_track and tidal_artist.id in [a.id for a in tidal_track.artists]:
-                    return tidal_artist
+            if normalize(tidal_artist.name.lower()) == normalize(spotify_artist['name'].lower()):
+                return tidal_artist
+        
+        # If no exact match, try using top tracks
+        try:
+            top_tracks = spotify_session.artist_top_tracks(spotify_artist['id'])['tracks'][:3]
+            if not top_tracks:
+                # Fallback to the first candidate if no top tracks
+                return tidal_candidates[0] if tidal_candidates else None
 
-        return None
+            # Only check the first few candidates to reduce API calls
+            for tidal_artist in tidal_candidates[:3]:
+                for track in top_tracks:
+                    tidal_track = await find_tidal_track_by_spotify_track(track, tidal_session)
+                    if tidal_track and tidal_artist.id in [a.id for a in tidal_track.artists]:
+                        return tidal_artist
+                    # Avoid rate limiting
+                    await asyncio.sleep(0.1)
+        except Exception:
+            pass
+        
+        # Return the first candidate if no track-based match is found
+        return tidal_candidates[0] if tidal_candidates else None
 
     # Fetch all followed artists from Spotify
     spotify_artists = await get_all_followed_artists()
