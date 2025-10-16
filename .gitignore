@@ -3,6 +3,7 @@ config.yml
 config.yaml
 .cache*
 .session.yml
+/logs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
