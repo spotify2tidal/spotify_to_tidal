@@ -20,6 +20,11 @@ spotify:
 #   - when false: favorites can only be synced manually via --sync-favorites argument
 sync_favorites_default: true
 
+# default setting for syncing followed artists when no command line arguments are provided
+#   - when true:  followed artists will be synced by default (overriden when any command line arg provided)
+#   - when false: artists can only be synced manually via --sync-artists argument
+sync_artists_default: false
+
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time
 rate_limit:      10 # max sustained connections per second
