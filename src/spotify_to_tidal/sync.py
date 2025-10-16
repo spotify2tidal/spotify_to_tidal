@@ -17,7 +17,6 @@ from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
 import traceback
 import unicodedata
-import math
 
 from .type import spotify as t_spotify
 
@@ -413,4 +412,66 @@ def get_playlists_from_config(spotify_session: spotipy.Spotify, tidal_session: t
             raise e
         output.append((spotify_playlist, tidal_playlist))
     return output
+
+async def get_followed_artists_from_spotify(spotify_session: spotipy.Spotify) -> List[dict]:
+    """ Get all followed artists from Spotify """
+    def _get_followed_artists(after=None):
+        return spotify_session.current_user_followed_artists(after=after)
+    
+    artists = []
+    results = await asyncio.to_thread(_get_followed_artists)
+    artists.extend(results['artists']['items'])
+    
+    while results['artists']['next']:
+        results = await asyncio.to_thread(_get_followed_artists, after=results['artists']['cursors']['after'])
+        artists.extend(results['artists']['items'])
+    
+    return artists
+
+async def search_artist_on_tidal(artist_name: str, tidal_session: tidalapi.Session) -> tidalapi.Artist | None:
+    """ Search for an artist on Tidal """
+    def _search():
+        results = tidal_session.search(artist_name, models=[tidalapi.artist.Artist])
+        if results['artists']:
+            return results['artists'][0]
+        return None
+    
+    return await asyncio.to_thread(_search)
+
+async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """ Sync followed artists from Spotify to Tidal """
+    print("Loading followed artists from Spotify")
+    spotify_artists = await get_followed_artists_from_spotify(spotify_session)
+    
+    if not spotify_artists:
+        print("No followed artists found on Spotify")
+        return
+    
+    print(f"Searching for {len(spotify_artists)} artists on Tidal")
+    failed_artists = []
+    
+    for artist in tqdm(spotify_artists, desc="Syncing artists to Tidal"):
+        try:
+            tidal_artist = await search_artist_on_tidal(artist['name'], tidal_session)
+            if tidal_artist:
+                try:
+                    tidal_session.user.favorites.add_artist(tidal_artist.id)
+                except Exception as e:
+                    print(f"Could not follow {artist['name']}: {e}")
+                    failed_artists.append(artist['name'])
+            else:
+                failed_artists.append(artist['name'])
+        except Exception as e:
+            print(f"Error syncing artist {artist['name']}: {e}")
+            failed_artists.append(artist['name'])
+    
+    if failed_artists:
+        print(f"\nCould not find/follow {len(failed_artists)} artists:")
+        for artist in failed_artists[:10]:  # Show first 10
+            print(f"  - {artist}")
+        if len(failed_artists) > 10:
+            print(f"  ... and {len(failed_artists) - 10} more")
+
+def sync_artists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    asyncio.run(sync_artists(spotify_session, tidal_session, config))
 
