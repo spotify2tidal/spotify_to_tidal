@@ -3,6 +3,7 @@ config.yml
 config.yaml
 .cache*
 .session.yml
+songs not found.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
