@@ -283,8 +283,10 @@ async def get_tracks_from_spotify_playlist(
             offset=offset, playlist_id=spotify_playlist["id"]
         ),
     )
+
     def track_filter(item):
         return item.get("type", "track") == "track"  # type may be 'episode' also
+
     def sanity_filter(item):
         return (
             "album" in item
@@ -293,6 +295,7 @@ async def get_tracks_from_spotify_playlist(
             and len(item["album"]["artists"]) > 0
             and item["album"]["artists"][0]["name"] is not None
         )
+
     return list(filter(sanity_filter, filter(track_filter, items)))
 
 
@@ -481,6 +484,7 @@ async def sync_playlist(
         )
     else:
         # Erase old playlist and add new tracks from scratch if any reordering occured
+        assert isinstance(tidal_playlist, tidalapi.UserPlaylist)
         clear_tidal_playlist(tidal_playlist)
         add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids)
 
@@ -490,10 +494,10 @@ async def sync_favorites(
 ):
     """sync user favorites to tidal"""
 
-    async def get_tracks_from_spotify_favorites() -> List[dict]:
-        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(
-            offset=offset
-        )
+    async def get_tracks_from_spotify_favorites() -> List[t_spotify.SpotifyTrack]:
+        def _get_favorite_tracks(offset):
+            return spotify_session.current_user_saved_tracks(offset=offset)
+
         tracks = await repeat_on_request_error(
             _fetch_all_from_spotify_in_chunks, _get_favorite_tracks
         )
@@ -512,6 +516,7 @@ async def sync_favorites(
     print("Loading favorite tracks from Spotify")
     spotify_tracks = await get_tracks_from_spotify_favorites()
     print("Loading existing favorite tracks from Tidal")
+    assert isinstance(tidal_session.user, LoggedInUser)
     old_tidal_tracks = await get_all_favorites(
         tidal_session.user.favorites, order="DATE"
     )
@@ -522,7 +527,7 @@ async def sync_favorites(
         for tidal_id in tqdm(
             new_tidal_favorite_ids, desc="Adding new tracks to Tidal favorites"
         ):
-            tidal_session.user.favorites.add_track(tidal_id)
+            tidal_session.user.favorites.add_track(str(tidal_id))
     else:
         print("No new tracks to add to Tidal favorites")
 
@@ -555,8 +560,13 @@ def sync_favorites_wrapper(
 def get_tidal_playlists_wrapper(
     tidal_session: tidalapi.Session,
 ) -> Mapping[str, tidalapi.Playlist]:
+    assert isinstance(tidal_session.user, LoggedInUser)
     tidal_playlists = asyncio.run(get_all_playlists(tidal_session.user))
-    return {playlist.name: playlist for playlist in tidal_playlists}
+    return {
+        playlist.name: playlist
+        for playlist in tidal_playlists
+        if playlist.name is not None
+    }
 
 
 def pick_tidal_playlist_for_spotify_playlist(
@@ -589,8 +599,9 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
     print("Loading Spotify playlists")
     first_results = spotify_session.current_user_playlists()
     exclude_list = set([x.split(":")[-1] for x in config.get("excluded_playlists", [])])
+    assert isinstance(first_results, dict)
     playlists.extend([p for p in first_results["items"]])
-    user_id = spotify_session.current_user()["id"]
+    user_id = spotify_session.current_user()["id"]  # type: ignore
 
     # get all the remaining playlists in parallel
     if first_results["next"]:
@@ -610,8 +621,12 @@ async def get_playlists_from_spotify(spotify_session: spotipy.Spotify, config):
             playlists.extend([p for p in extra_result["items"]])
 
     # filter out playlists that don't belong to us or are on the exclude list
-    my_playlist_filter = lambda p: p and p["owner"]["id"] == user_id
-    exclude_filter = lambda p: p["id"] not in exclude_list
+    def my_playlist_filter(p):
+        return p and p["owner"]["id"] == user_id
+
+    def exclude_filter(p):
+        return p["id"] not in exclude_list
+
     return list(filter(exclude_filter, filter(my_playlist_filter, playlists)))
 
 

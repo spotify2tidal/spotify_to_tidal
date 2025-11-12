@@ -1,4 +1,4 @@
-from typing import TypedDict, Literal, List, Optional
+from typing import List, Literal, Optional, TypedDict
 
 
 class SpotifyConfig(TypedDict):
