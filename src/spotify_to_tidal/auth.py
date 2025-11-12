@@ -26,7 +26,7 @@ def open_spotify_session(config) -> spotipy.Spotify:
         credentials_manager.get_access_token(as_dict=False)
     except spotipy.SpotifyOauthError:
         sys.exit(
-            "Error opening Spotify sesion; could not get token for username: ".format(
+            "Error opening Spotify sesion; could not get token for username: {}".format(
                 config["username"]
             )
         )
