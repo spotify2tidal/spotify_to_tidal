@@ -1,0 +1,16 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff-check
+        name: "Static code analysis (ruff)"
+        args: [--fix] # auto-fix issues if possible
+      - id: ruff-check
+        name: "Check naming conventions (ruff)"
+        args: [--select, N]
+      - id: ruff-format
+        name: "Code formatting (ruff)"
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.406
+    hooks:
+      - id: pyright

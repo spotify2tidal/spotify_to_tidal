@@ -115,7 +115,6 @@ def artist_match(
         if tidal.artists is None:
             return set()
 
-        
         for artist in tidal.artists:
             assert artist.name is not None
             if do_normalize:
@@ -309,7 +308,7 @@ async def get_tracks_from_spotify_playlist(
         fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
         return spotify_session.playlist_tracks(
             playlist_id=playlist_id, fields=fields, offset=offset
-        ) #type: ignore
+        )  # type: ignore
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
     items = await repeat_on_request_error(
@@ -330,7 +329,7 @@ async def get_tracks_from_spotify_playlist(
             and len(item["album"]["artists"]) > 0
             and item["album"]["artists"][0]["name"] is not None
         )
-    
+
     items = [t_spotify.SpotifyTrack(**item) for item in items]
     return list(filter(sanity_filter, filter(track_filter, items)))
 
@@ -532,7 +531,7 @@ async def sync_favorites(
 
     async def get_tracks_from_spotify_favorites() -> List[t_spotify.SpotifyTrack]:
         def _get_favorite_tracks(offset: int) -> Mapping[str, Any]:
-            return spotify_session.current_user_saved_tracks(offset=offset) #type: ignore
+            return spotify_session.current_user_saved_tracks(offset=offset)  # type: ignore
 
         tracks = await repeat_on_request_error(
             _fetch_all_from_spotify_in_chunks, _get_favorite_tracks

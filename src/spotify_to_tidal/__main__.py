@@ -33,7 +33,7 @@ def main() -> None:
         sys.exit("Could not connect to Tidal")
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
-        spotify_playlist: Mapping[str, Any] = spotify_session.playlist(args.uri) #type: ignore
+        spotify_playlist: Mapping[str, Any] = spotify_session.playlist(args.uri)  # type: ignore
         tidal_playlists = _sync.get_tidal_playlists_wrapper(tidal_session)
         tidal_playlist = _sync.pick_tidal_playlist_for_spotify_playlist(
             spotify_playlist, tidal_playlists
