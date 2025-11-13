@@ -14,7 +14,8 @@ dependencies = [
   "tqdm~=4.64",
   "sqlalchemy~=2.0",
   "pytest~=8.0",
-  "pytest-mock~=3.8"
+  "pytest-mock~=3.8",
+  "pre-commit~=3.7"
 ]
 
 [tools.setuptools.packages."spotify_to_tidal"]
@@ -23,3 +24,12 @@ include = "spotify_to_tidal*"
 
 [project.scripts]
 spotify_to_tidal = "spotify_to_tidal.__main__:main"
+
+[tool.pyright]
+include = ["src"]
+venvPath = "."
+venv = ".venv"
+pythonPlatform = "All"
+useLibraryCodeForTypes = true
+extraPaths = ["src"]
+reportPrivateImportUsage = "none"
