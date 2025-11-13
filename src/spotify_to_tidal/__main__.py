@@ -1,5 +1,6 @@
 import argparse
 import sys
+from typing import Any, Mapping
 
 import yaml
 
@@ -7,7 +8,7 @@ from . import auth as _auth
 from . import sync as _sync
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", default="config.yml", help="location of the config file"
@@ -32,7 +33,7 @@ def main():
         sys.exit("Could not connect to Tidal")
     if args.uri:
         # if a playlist ID is explicitly provided as a command line argument then use that
-        spotify_playlist = spotify_session.playlist(args.uri)
+        spotify_playlist: Mapping[str, Any] = spotify_session.playlist(args.uri) #type: ignore
         tidal_playlists = _sync.get_tidal_playlists_wrapper(tidal_session)
         tidal_playlist = _sync.pick_tidal_playlist_for_spotify_playlist(
             spotify_playlist, tidal_playlists

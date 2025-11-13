@@ -21,7 +21,7 @@ class MatchFailureDatabase:
     this can be used concurrently between multiple processes
     """
 
-    def __init__(self, filename=".cache.db"):
+    def __init__(self, filename: str = ".cache.db") -> None:
         self.engine = sqlalchemy.create_engine(f"sqlite:///{filename}")
         meta = MetaData()
         self.match_failures = Table(
@@ -44,7 +44,7 @@ class MatchFailureDatabase:
             interval = datetime.timedelta(days=7)
         return datetime.datetime.now() + interval
 
-    def cache_match_failure(self, track_id: str):
+    def cache_match_failure(self, track_id: str) -> None:
         """notifies that matching failed for the given track_id"""
         fetch_statement = select(self.match_failures).where(
             self.match_failures.c.track_id == track_id
@@ -81,7 +81,7 @@ class MatchFailureDatabase:
                 return match_failure.next_retry > datetime.datetime.now()
             return False
 
-    def remove_match_failure(self, track_id: str):
+    def remove_match_failure(self, track_id: str) -> None:
         """removes match failure from the database"""
         statement = delete(self.match_failures).where(
             self.match_failures.c.track_id == track_id
@@ -102,7 +102,7 @@ class TrackMatchCache:
     def get(self, track_id: str) -> int | None:
         return self.data.get(track_id, None)
 
-    def insert(self, mapping: tuple[str, int]):
+    def insert(self, mapping: tuple[str, int]) -> None:
         self.data[mapping[0]] = mapping[1]
 
 
