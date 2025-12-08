@@ -1,3 +1,10 @@
+> NOTE: this project is forked from: https://github.com/spotify2tidal/spotify_to_tidal and includes the folllowing features:
+>
+> - Support for synchronizing saved albums
+> - Fuzzy and partial matching for better coverage
+>
+> See https://github.com/spotify2tidal/spotify_to_tidal/issues/151 and https://github.com/spotify2tidal/spotify_to_tidal/pull/150
+
 A command line tool for importing your Spotify playlists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
 
 Installation
