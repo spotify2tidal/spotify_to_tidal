@@ -48,6 +48,9 @@ def main():
     if not tidal_session.check_login():
         sys.exit("Could not connect to Tidal")
     
+    # Clear any previous not found logs
+    _sync.clear_not_found_log()
+    
     if sync_playlists:
         if args.uri:
             # if a playlist ID is explicitly provided as a command line argument then use that
@@ -70,6 +73,9 @@ def main():
     
     if sync_artists:
         _sync.sync_artists_wrapper(spotify_session, tidal_session, config)
+    
+    # Write consolidated log of all items not found
+    _sync.write_not_found_log()
 
 if __name__ == '__main__':
     main()

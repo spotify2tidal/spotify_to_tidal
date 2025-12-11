@@ -21,6 +21,65 @@ import math
 
 from .type import spotify as t_spotify
 
+# Global list to track all items not found during sync
+_not_found_items = []
+
+def add_not_found_item(item_type: str, item_info: str, context: str = None):
+    """Add an item that couldn't be found to the global not found list"""
+    _not_found_items.append({
+        'type': item_type,
+        'info': item_info,
+        'context': context
+    })
+
+def write_not_found_log():
+    """Write all not found items to a single consolidated log file"""
+    if not _not_found_items:
+        return
+    
+    filename = "items not found.txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("==========================\n")
+        f.write("Spotify to Tidal Sync Log\n")
+        f.write("Items Not Found on Tidal\n")
+        f.write("==========================\n\n")
+        
+        # Group items by type
+        songs = [item for item in _not_found_items if item['type'] == 'track']
+        albums = [item for item in _not_found_items if item['type'] == 'album']
+        artists = [item for item in _not_found_items if item['type'] == 'artist']
+        
+        if songs:
+            f.write("TRACKS/SONGS:\n")
+            f.write("-" * 40 + "\n")
+            for item in songs:
+                context_str = f" (from {item['context']})" if item['context'] else ""
+                f.write(f"{item['info']}{context_str}\n")
+            f.write("\n")
+        
+        if albums:
+            f.write("ALBUMS:\n")
+            f.write("-" * 40 + "\n")
+            for item in albums:
+                f.write(f"{item['info']}\n")
+            f.write("\n")
+        
+        if artists:
+            f.write("ARTISTS:\n")
+            f.write("-" * 40 + "\n")
+            for item in artists:
+                f.write(f"{item['info']}\n")
+            f.write("\n")
+        
+        f.write(f"Total items not found: {len(_not_found_items)}\n")
+    
+    print(f"Wrote {len(_not_found_items)} items not found to '{filename}'")
+
+def clear_not_found_log():
+    """Clear the not found items list (called at start of sync)"""
+    global _not_found_items
+    _not_found_items = []
+
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
@@ -310,15 +369,11 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         if search_results[idx]:
             track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
         else:
-            song404.append(f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}")
+            song_info = f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}"
+            song404.append(song_info)
+            add_not_found_item('track', song_info, playlist_name)
             color = ('\033[91m', '\033[0m')
-            print(color[0] + "Could not find the track " + song404[-1] + color[1])
-    file_name = "songs not found.txt"
-    header = f"==========================\nPlaylist: {playlist_name}\n==========================\n"
-    with open(file_name, "a", encoding="utf-8") as file:
-        file.write(header)
-        for song in song404:
-            file.write(f"{song}\n")
+            print(color[0] + "Could not find the track " + song_info + color[1])
 
             
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
@@ -784,17 +839,9 @@ async def search_new_albums_on_tidal(tidal_session: tidalapi.Session, spotify_al
         else:
             album_info = f"{spotify_album['id']}: {','.join([a['name'] for a in spotify_album['artists']])} - {spotify_album['name']}"
             albums_not_found.append(album_info)
+            add_not_found_item('album', album_info)
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find album " + album_info + color[1])
-    
-    # Log albums not found
-    if albums_not_found:
-        file_name = "albums not found.txt"
-        header = f"==========================\nSaved Albums Sync\n==========================\n"
-        with open(file_name, "a", encoding="utf-8") as file:
-            file.write(header)
-            for album in albums_not_found:
-                file.write(f"{album}\n")
 
 async def sync_artists(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync followed artists from Spotify to Tidal """
@@ -895,13 +942,9 @@ async def search_new_artists_on_tidal(tidal_session: tidalapi.Session, spotify_a
         if search_results[idx]:
             artist_match_cache.insert((spotify_artist['id'], search_results[idx].id))
         else:
-            artists_not_found.append(f"{spotify_artist['name']}")
-
-    if artists_not_found:
-        with open("artists not found.txt", "w", encoding="utf-8") as f:
-            for artist in artists_not_found:
-                f.write(f"{artist}\n")
-        print(f"Wrote {len(artists_not_found)} artists not found to 'artists not found.txt'")
+            artist_info = f"{spotify_artist['name']}"
+            artists_not_found.append(artist_info)
+            add_not_found_item('artist', artist_info)
 
 def sync_albums_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     asyncio.run(sync_albums(spotify_session, tidal_session, config))
