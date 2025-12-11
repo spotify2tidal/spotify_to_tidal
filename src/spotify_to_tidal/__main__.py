@@ -12,6 +12,7 @@ def main():
     parser.add_argument('--sync-playlists', action=argparse.BooleanOptionalAction, help='synchronize the playlists')
     parser.add_argument('--sync-favorites', action=argparse.BooleanOptionalAction, help='synchronize the favorites')
     parser.add_argument('--sync-albums', action=argparse.BooleanOptionalAction, help='synchronize saved albums')
+    parser.add_argument('--sync-artists', action=argparse.BooleanOptionalAction, help='synchronize followed artists')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -23,7 +24,8 @@ def main():
     any_sync_args_specified = any([
         args.sync_playlists is not None,
         args.sync_favorites is not None, 
-        args.sync_albums is not None
+        args.sync_albums is not None,
+        args.sync_artists is not None
     ])
     
     if any_sync_args_specified:
@@ -31,11 +33,13 @@ def main():
         sync_playlists = args.sync_playlists if args.sync_playlists is not None else False
         sync_favorites = args.sync_favorites if args.sync_favorites is not None else False
         sync_albums = args.sync_albums if args.sync_albums is not None else False
+        sync_artists = args.sync_artists if args.sync_artists is not None else False
     else:
         # No explicit args - use config defaults, but default to True if config doesn't specify
         sync_playlists = config.get('sync_playlists_default', True)
         sync_favorites = config.get('sync_favorites_default', True) 
         sync_albums = config.get('sync_albums_default', True)
+        sync_artists = config.get('sync_artists_default', True)
     
     print("Opening Spotify session")
     spotify_session = _auth.open_spotify_session(config['spotify'])
@@ -63,6 +67,9 @@ def main():
     
     if sync_albums:
         _sync.sync_albums_wrapper(spotify_session, tidal_session, config)
+    
+    if sync_artists:
+        _sync.sync_artists_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':
     main()
