@@ -19,6 +19,7 @@ spotify:
 sync_playlists_default: true # default to sync playlists
 sync_favorites_default: true # default to  sync favorites
 sync_albums_default: true # default to sync albums
+sync_artists_default: true # default to sync followed artists
 
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time

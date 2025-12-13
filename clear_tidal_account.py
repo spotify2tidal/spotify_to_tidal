@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Test script to clear all saved albums, playlists, and favorites from Tidal account.
+Test script to selectively clear saved albums, playlists, favorites, and followed artists from Tidal account.
 
-WARNING: This will permanently delete all your Tidal favorites, saved albums, and user-created playlists!
+WARNING: This will permanently delete data from your Tidal account!
 Use this only for testing purposes on a test account.
 
 This script integrates with the spotify_to_tidal configuration system:
@@ -12,17 +12,24 @@ This script integrates with the spotify_to_tidal configuration system:
 - Does not require Spotify credentials since it only touches Tidal
 
 Usage:
-    ./clear_tidal_account.py                    # Use default config.yml
-    ./clear_tidal_account.py --config test.yml # Use custom config file
+    ./clear_tidal_account.py                                          # Clear everything
+    ./clear_tidal_account.py --config test.yml                       # Use custom config file
+    ./clear_tidal_account.py --clear-favorites                       # Clear only favorites
+    ./clear_tidal_account.py --clear-albums --clear-artists          # Clear albums and artists
+    ./clear_tidal_account.py --no-clear-playlists                    # Clear everything except playlists
+
+Available clear options:
+- --clear-favorites / --no-clear-favorites: Clear favorite tracks
+- --clear-albums / --no-clear-albums: Clear saved albums  
+- --clear-playlists / --no-clear-playlists: Clear user-created playlists
+- --clear-artists / --no-clear-artists: Clear followed artists
 
 The script will:
 1. Load the config file (optional, mainly for consistency)
 2. Authenticate with Tidal using existing session or OAuth flow
-3. Clear all favorite tracks from your Tidal library
-4. Clear all saved albums from your Tidal collection
-5. Delete all user-created playlists (not system playlists like "My Mix")
+3. Selectively clear the specified data types from your Tidal account
 
-Multiple confirmation prompts ensure you don't accidentally delete everything.
+Multiple confirmation prompts ensure you don't accidentally delete data.
 """
 
 import asyncio
@@ -35,7 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from spotify_to_tidal.auth import open_tidal_session
-from spotify_to_tidal.tidalapi_patch import get_all_favorites, get_all_playlists, get_all_saved_albums
+from spotify_to_tidal.tidalapi_patch import get_all_favorites, get_all_playlists, get_all_saved_albums, get_all_saved_artists
 import tidalapi
 from tqdm import tqdm
 
@@ -134,21 +141,90 @@ async def clear_user_playlists(session: tidalapi.Session):
     print("✓ All user playlists cleared.")
 
 
+async def clear_followed_artists(session: tidalapi.Session):
+    """Clear all followed artists"""
+    print("Fetching all followed artists...")
+    artists = await get_all_saved_artists(session.user)
+    
+    if not artists:
+        print("No followed artists to clear.")
+        return
+    
+    print(f"Found {len(artists)} followed artists. Clearing...")
+    
+    # Remove artists in chunks
+    chunk_size = 20
+    with tqdm(desc="Unfollowing artists", total=len(artists)) as progress:
+        for i in range(0, len(artists), chunk_size):
+            chunk = artists[i:i + chunk_size]
+            
+            for artist in chunk:
+                try:
+                    session.user.favorites.remove_artist(artist.id)
+                except Exception as e:
+                    print(f"Error unfollowing artist {artist.id} ({artist.name}): {e}")
+            
+            progress.update(len(chunk))
+    
+    print("✓ All followed artists cleared.")
+
+
 async def main():
     """Main function to clear all Tidal account data"""
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Clear all data from Tidal account")
+    parser = argparse.ArgumentParser(description="Clear data from Tidal account")
     parser.add_argument('--config', default='config.yml', help='location of the config file')
+    parser.add_argument('--clear-favorites', action=argparse.BooleanOptionalAction, help='clear favorite tracks')
+    parser.add_argument('--clear-albums', action=argparse.BooleanOptionalAction, help='clear saved albums')
+    parser.add_argument('--clear-playlists', action=argparse.BooleanOptionalAction, help='clear user-created playlists')
+    parser.add_argument('--clear-artists', action=argparse.BooleanOptionalAction, help='clear followed artists')
     args = parser.parse_args()
     
-    print("🚨 WARNING: This script will permanently delete ALL of the following from your Tidal account:")
-    print("   - All favorite tracks")
-    print("   - All saved albums") 
-    print("   - All user-created playlists")
+    # Determine what to clear based on arguments
+    # If no clear options are specified via CLI args, default to clearing everything
+    any_clear_args_specified = any([
+        args.clear_favorites is not None,
+        args.clear_albums is not None,
+        args.clear_playlists is not None,
+        args.clear_artists is not None
+    ])
+    
+    if any_clear_args_specified:
+        # Explicit args provided - only clear what's explicitly enabled
+        clear_favorites_flag = args.clear_favorites if args.clear_favorites is not None else False
+        clear_albums_flag = args.clear_albums if args.clear_albums is not None else False
+        clear_playlists_flag = args.clear_playlists if args.clear_playlists is not None else False
+        clear_artists_flag = args.clear_artists if args.clear_artists is not None else False
+    else:
+        # No explicit args - clear everything
+        clear_favorites_flag = True
+        clear_albums_flag = True
+        clear_playlists_flag = True
+        clear_artists_flag = True
+    
+    # Build warning message based on what will be cleared
+    items_to_clear = []
+    if clear_favorites_flag:
+        items_to_clear.append("All favorite tracks")
+    if clear_albums_flag:
+        items_to_clear.append("All saved albums")
+    if clear_playlists_flag:
+        items_to_clear.append("All user-created playlists")
+    if clear_artists_flag:
+        items_to_clear.append("All followed artists")
+    
+    if not items_to_clear:
+        print("No items selected for clearing. Use --help to see available options.")
+        return 0
+    
+    print("🚨 WARNING: This script will permanently delete the following from your Tidal account:")
+    for item in items_to_clear:
+        print(f"   - {item}")
     print("\nThis action CANNOT be undone!")
     
-    response = input("\nAre you absolutely sure you want to proceed? (type 'DELETE' to confirm): ")
-    if response != 'DELETE':
+    confirmation_text = "DELETE ALL" if len(items_to_clear) > 1 else "DELETE"
+    response = input(f"\nAre you absolutely sure you want to proceed? (type '{confirmation_text}' to confirm): ")
+    if response != confirmation_text:
         print("Operation cancelled. Your Tidal account is unchanged.")
         return
     
@@ -175,21 +251,35 @@ async def main():
             
         print(f"✓ Authenticated as: {session.user.first_name} {session.user.last_name}")
         
-        # Clear favorites
-        print("\n" + "="*50)
-        await clear_favorites(session)
+        # Clear selected items
+        cleared_items = []
         
-        # Clear saved albums
-        print("\n" + "="*50)
-        await clear_saved_albums(session)
+        if clear_favorites_flag:
+            print("\n" + "="*50)
+            await clear_favorites(session)
+            cleared_items.append("favorites")
         
-        # Clear user playlists
-        print("\n" + "="*50)
-        await clear_user_playlists(session)
+        if clear_albums_flag:
+            print("\n" + "="*50)
+            await clear_saved_albums(session)
+            cleared_items.append("saved albums")
+        
+        if clear_playlists_flag:
+            print("\n" + "="*50)
+            await clear_user_playlists(session)
+            cleared_items.append("user playlists")
+            
+        if clear_artists_flag:
+            print("\n" + "="*50)
+            await clear_followed_artists(session)
+            cleared_items.append("followed artists")
         
         print("\n" + "="*50)
-        print("🎉 Tidal account successfully cleared!")
-        print("Your account now has no favorites, saved albums, or user playlists.")
+        print("🎉 Selected Tidal data successfully cleared!")
+        if cleared_items:
+            print(f"Cleared: {', '.join(cleared_items)}")
+        else:
+            print("No items were cleared.")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
