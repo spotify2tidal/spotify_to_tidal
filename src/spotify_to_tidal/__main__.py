@@ -10,10 +10,23 @@ def main():
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
     parser.add_argument('--sync-favorites', action=argparse.BooleanOptionalAction, help='synchronize the favorites')
+    parser.add_argument('--sync-followed-artists', action=argparse.BooleanOptionalAction, help='synchronize followed artists only')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+
+    # Explicit mode: followed artists only
+    if args.sync_followed_artists:
+        print("Opening Spotify session (followed artists scope)")
+        spotify_session = _auth.open_spotify_session(config['spotify'], scope=_auth.SPOTIFY_SCOPE_USER_FOLLOW_READ)
+        print("Opening Tidal session")
+        tidal_session = _auth.open_tidal_session()
+        if not tidal_session.check_login():
+            sys.exit("Could not connect to Tidal")
+        _sync.sync_followed_artists_wrapper(spotify_session, tidal_session, config)
+        return
+
     print("Opening Spotify session")
     spotify_session = _auth.open_spotify_session(config['spotify'])
     print("Opening Tidal session")
