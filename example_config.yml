@@ -23,3 +23,22 @@ sync_favorites_default: true
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time
 rate_limit:      10 # max sustained connections per second
+
+# adaptive delay between searches - helps prevent rate limiting on large playlists
+# delay increases with playlist size: delay = search_delay_per_track + (total_tracks * adaptive_delay_multiplier)
+search_delay_per_track: 0.0 # base delay in seconds (0 = disabled)
+adaptive_delay_multiplier: 0.0001 # additional delay per track (e.g., 0.0001 = 0.1s per 1000 tracks)
+max_search_delay: 0.5 # maximum delay cap in seconds
+
+# proactive pause mechanism - pause after N requests to prevent hitting rate limits
+# recommended: pause_after_requests: 50-100 for large playlists, pause_duration: 30-60 seconds
+pause_after_requests: 0 # pause after this many requests (0 = disabled)
+pause_duration: 30 # seconds to pause when pause_after_requests is reached
+
+# skip syncing playlists that already exist and have sufficient tracks (useful if sync was interrupted)
+skip_if_sufficient_tracks: false # when true, only syncs if playlist doesn't exist or has less than threshold % of tracks
+sufficient_tracks_threshold: 0.8 # percentage threshold (0.8 = 80%) - only used when skip_if_sufficient_tracks is true
+
+# skip syncing playlists that exceed a certain track count (useful to avoid rate limiting on very large playlists)
+skip_large_playlists: false # when true, skips playlists with more than max_track_count tracks
+max_track_count: 3000 # maximum number of tracks - only used when skip_large_playlists is true

@@ -98,7 +98,7 @@ def match(tidal_track, spotify_track) -> bool:
 def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
     return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
-async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session, search_delay: float = 0.0) -> tidalapi.Track | None:
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
@@ -123,10 +123,14 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
     await rate_limiter.acquire()
+    if search_delay > 0:
+        await asyncio.sleep(search_delay)
     album_search = await asyncio.to_thread( _search_for_track_in_album )
     if album_search:
         return album_search
     await rate_limiter.acquire()
+    if search_delay > 0:
+        await asyncio.sleep(search_delay)
     track_search = await asyncio.to_thread( _search_for_standalone_track )
     if track_search:
         return track_search
@@ -144,17 +148,70 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         else:
             print(f"{str(e)} could not be recovered")
 
-        if isinstance(e, requests.exceptions.RequestException) and not e.response is None:
-            print(f"Response message: {e.response.text}")
-            print(f"Response headers: {e.response.headers}")
+        # Debug: Print exception type and attributes
+        print(f"DEBUG: Exception type: {type(e).__name__}")
+        print(f"DEBUG: Exception attributes: {dir(e)}")
+        
+        # Check for Retry-After header in response (Spotify/Tidal API best practice)
+        retry_after = None
+        response = None
+        
+        # Try to get response from different exception types
+        if isinstance(e, requests.exceptions.RequestException):
+            response = getattr(e, 'response', None)
+        elif isinstance(e, tidalapi.exceptions.TooManyRequests):
+            # tidalapi exceptions might wrap requests exceptions or have response attribute
+            response = getattr(e, 'response', None)
+            if response is None and hasattr(e, '__cause__') and e.__cause__ is not None:
+                # Check if the cause is a requests exception
+                if isinstance(e.__cause__, requests.exceptions.RequestException):
+                    response = getattr(e.__cause__, 'response', None)
+            if response is None and hasattr(e, 'args') and len(e.args) > 0:
+                # Check if response is in args
+                for arg in e.args:
+                    if hasattr(arg, 'headers'):
+                        response = arg
+                        break
+        
+        if response is not None:
+            print(f"DEBUG: Found response object, headers: {list(response.headers.keys())}")
+            retry_after_header = response.headers.get('Retry-After') or response.headers.get('retry-after')
+            if retry_after_header:
+                try:
+                    retry_after = int(retry_after_header)
+                    print(f"✓ API returned Retry-After header: {retry_after} seconds")
+                except ValueError:
+                    print(f"DEBUG: Retry-After header value '{retry_after_header}' is not a valid integer")
+            else:
+                print(f"DEBUG: No Retry-After header found. Available headers: {list(response.headers.keys())}")
+            
+            if hasattr(response, 'text'):
+                print(f"Response message: {response.text[:200]}...")  # Truncate long messages
+            print(f"Response status: {getattr(response, 'status_code', 'N/A')}")
+        else:
+            print(f"DEBUG: No response object found in exception")
 
         if not remaining:
             print("Aborting sync")
             print(f"The following arguments were provided:\n\n {str(args)}")
             print(traceback.format_exc())
             sys.exit(1)
-        sleep_schedule = {5: 1, 4:10, 3:60, 2:5*60, 1:10*60} # sleep variable length of time depending on retry number
-        time.sleep(sleep_schedule.get(remaining, 1))
+        
+        # Use Retry-After header if available, otherwise use backoff schedule
+        if retry_after is not None:
+            sleep_time = retry_after
+            print(f"⏱ Waiting {sleep_time} seconds (as specified by Retry-After header) before retry...")
+        else:
+            # Use longer backoff times for TooManyRequests errors
+            if isinstance(e, tidalapi.exceptions.TooManyRequests):
+                sleep_schedule = {5: 30, 4: 60, 3: 120, 2: 300, 1: 600}  # 30s, 1m, 2m, 5m, 10m
+            else:
+                sleep_schedule = {5: 1, 4: 10, 3: 60, 2: 5*60, 1: 10*60}  # 1s, 10s, 1m, 5m, 10m
+            
+            sleep_time = sleep_schedule.get(remaining, 30)
+            print(f"⏱ Waiting {sleep_time} seconds (using backoff schedule) before retry...")
+        
+        time.sleep(sleep_time)
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
@@ -264,11 +321,51 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
     if not tracks_to_search:
         return
 
+    # Calculate adaptive delay based on playlist size - larger playlists need more delay between searches
+    # Base delay increases with playlist size to avoid rate limiting
+    base_delay = config.get('search_delay_per_track', 0.0)
+    adaptive_delay_multiplier = config.get('adaptive_delay_multiplier', 0.0001)  # Delay increases by this per track
+    total_tracks = len(spotify_tracks)
+    search_delay = base_delay + (total_tracks * adaptive_delay_multiplier)
+    
+    # Cap the delay at a reasonable maximum (e.g., 0.5 seconds per search)
+    max_delay = config.get('max_search_delay', 0.5)
+    search_delay = min(search_delay, max_delay)
+    
+    if search_delay > 0 and total_tracks > 100:
+        print(f"Using adaptive delay of {search_delay:.3f}s per search for large playlist ({total_tracks} tracks)")
+
+    # Proactive pause configuration - pause after N requests to prevent rate limiting
+    pause_after_requests = config.get('pause_after_requests', 0)  # 0 = disabled
+    pause_duration = config.get('pause_duration', 30)  # seconds to pause
+    
+    # Shared counter for tracking requests across all concurrent tasks
+    request_counter = {'count': 0}
+    request_lock = asyncio.Lock()
+    
+    async def tidal_search_with_pause(spotify_track, rate_limiter, tidal_session, search_delay):
+        """Wrapper that adds proactive pauses after N requests"""
+        result = await repeat_on_request_error(tidal_search, spotify_track, rate_limiter, tidal_session, search_delay)
+        
+        # Increment counter and pause if needed
+        if pause_after_requests > 0:
+            async with request_lock:
+                request_counter['count'] += 1
+                if request_counter['count'] % pause_after_requests == 0:
+                    print(f"Proactive pause: {request_counter['count']} requests completed, pausing for {pause_duration}s to avoid rate limits...")
+                    await asyncio.sleep(pause_duration)
+        
+        return result
+
     # Search for each of the tracks on Tidal concurrently
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(tracks_to_search), len(spotify_tracks), playlist_name)
     semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
     rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
-    search_results = await atqdm.gather( *[ repeat_on_request_error(tidal_search, t, semaphore, tidal_session) for t in tracks_to_search ], desc=task_description )
+    
+    if pause_after_requests > 0:
+        print(f"Proactive pause enabled: pausing for {pause_duration}s after every {pause_after_requests} requests")
+    
+    search_results = await atqdm.gather( *[ tidal_search_with_pause(t, semaphore, tidal_session, search_delay) for t in tracks_to_search ], desc=task_description )
     rate_limiter_task.cancel()
 
     # Add the search results to the cache
@@ -294,8 +391,29 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
     spotify_tracks = await get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
     if len(spotify_tracks) == 0:
         return # nothing to do
+    
+    # Check if we should skip playlists that exceed a certain track count
+    skip_large_playlists = config.get('skip_large_playlists', False)
+    if skip_large_playlists:
+        max_track_count = config.get('max_track_count', 3000)
+        if len(spotify_tracks) > max_track_count:
+            print(f"Skipping sync for playlist '{spotify_playlist['name']}': has {len(spotify_tracks)} tracks, which exceeds the limit of {max_track_count}")
+            return
+    
+    # Get Tidal tracks if playlist exists, otherwise create new playlist
     if tidal_playlist:
         old_tidal_tracks = await get_all_playlist_tracks(tidal_playlist)
+        
+        # Check if we should skip sync based on completion threshold
+        skip_if_sufficient_tracks = config.get('skip_if_sufficient_tracks', False)
+        if skip_if_sufficient_tracks:
+            spotify_track_count = len(spotify_tracks)
+            tidal_track_count = len(old_tidal_tracks)
+            threshold = config.get('sufficient_tracks_threshold', 0.8)  # Default 80%
+            
+            if spotify_track_count > 0 and tidal_track_count >= (spotify_track_count * threshold):
+                print(f"Skipping sync for playlist '{spotify_playlist['name']}': Tidal has {tidal_track_count}/{spotify_track_count} tracks ({tidal_track_count/spotify_track_count*100:.1f}%), which meets the {threshold*100:.0f}% threshold")
+                return
     else:
         print(f"No playlist found on Tidal corresponding to Spotify playlist: '{spotify_playlist['name']}', creating new playlist")
         tidal_playlist =  tidal_session.user.create_playlist(spotify_playlist['name'], spotify_playlist['description'])
