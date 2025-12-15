@@ -11,11 +11,16 @@ __all__ = [
     'open_tidal_session'
 ]
 
-SPOTIFY_SCOPES = 'playlist-read-private, user-library-read'
+SPOTIFY_SCOPE_PLAYLIST_READ_PRIVATE = 'playlist-read-private'
+SPOTIFY_SCOPE_USER_LIBRARY_READ = 'user-library-read'
+SPOTIFY_SCOPE_USER_FOLLOW_READ = 'user-follow-read'
 
-def open_spotify_session(config) -> spotipy.Spotify:
+# Default scopes used for the existing playlist + liked-songs flows
+SPOTIFY_SCOPES_DEFAULT = f'{SPOTIFY_SCOPE_PLAYLIST_READ_PRIVATE}, {SPOTIFY_SCOPE_USER_LIBRARY_READ}'
+
+def open_spotify_session(config, scope: str | None = None) -> spotipy.Spotify:
     credentials_manager = spotipy.SpotifyOAuth(username=config['username'],
-       scope=SPOTIFY_SCOPES,
+       scope=scope or SPOTIFY_SCOPES_DEFAULT,
        client_id=config['client_id'],
        client_secret=config['client_secret'],
        redirect_uri=config['redirect_uri'],

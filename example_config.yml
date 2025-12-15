@@ -42,3 +42,9 @@ sufficient_tracks_threshold: 0.8 # percentage threshold (0.8 = 80%) - only used 
 # skip syncing playlists that exceed a certain track count (useful to avoid rate limiting on very large playlists)
 skip_large_playlists: false # when true, skips playlists with more than max_track_count tracks
 max_track_count: 3000 # maximum number of tracks - only used when skip_large_playlists is true
+
+# followed artist sync (used by --sync-followed-artists)
+# name-only matching can be ambiguous; increase threshold to reduce false positives
+artist_match_threshold: 0.9
+# number of top artist search results to consider for matching
+artist_search_limit: 10
