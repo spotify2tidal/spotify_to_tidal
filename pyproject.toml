@@ -8,8 +8,8 @@ version = "1.0.6"
 requires-python = ">= 3.10"
 
 dependencies = [
-  "spotipy~=2.24.0",
-  "tidalapi==0.8.10",
+  "spotipy~=2.24",
+  "tidalapi==0.8",
   "pyyaml~=6.0",
   "tqdm~=4.64",
   "sqlalchemy~=2.0",
