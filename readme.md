@@ -7,7 +7,7 @@
 >
 > See https://github.com/spotify2tidal/spotify_to_tidal/issues/151 and https://github.com/spotify2tidal/spotify_to_tidal/pull/150
 
-A command line tool for importing your Spotify playlists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
+A command line tool for importing your Spotify playlists, saved albums and artists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
 
 Installation
 -----------
