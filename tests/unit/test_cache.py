@@ -5,7 +5,7 @@ import datetime
 import sqlalchemy
 from sqlalchemy import create_engine, select
 from unittest import mock
-from spotify_to_tidal.cache import MatchFailureDatabase, TrackMatchCache
+from spotify_to_tidal.cache import MatchFailureDatabase, TrackMatchCache, AlbumMatchCache
 
 
 # Setup an in-memory SQLite database for testing
@@ -78,3 +78,51 @@ def test_track_match_cache_get():
     track_cache.insert(("spotify_id", 123))
     assert track_cache.get("spotify_id") == 123
     assert track_cache.get("nonexistent_id") is None
+
+
+# Test AlbumMatchCache
+def test_album_match_cache_insert():
+    album_cache = AlbumMatchCache()
+    # Clear any existing data to ensure clean test state
+    album_cache.data = {}
+    album_cache.insert(("spotify_album_id", "tidal_album_id"))
+    assert album_cache.get("spotify_album_id") == "tidal_album_id"
+
+
+def test_album_match_cache_get():
+    album_cache = AlbumMatchCache()
+    # Clear any existing data to ensure clean test state
+    album_cache.data = {}
+    album_cache.insert(("spotify_album_id", "tidal_album_id"))
+    assert album_cache.get("spotify_album_id") == "tidal_album_id"
+    assert album_cache.get("nonexistent_id") is None
+
+
+def test_album_match_cache_nonexistent_key():
+    album_cache = AlbumMatchCache()
+    # Clear any existing data to ensure clean test state
+    album_cache.data = {}
+    assert album_cache.get("nonexistent_key") is None
+
+
+def test_album_match_cache_multiple_operations():
+    album_cache = AlbumMatchCache()
+    # Clear any existing data to ensure clean test state
+    album_cache.data = {}
+    
+    # Insert multiple entries
+    album_cache.insert(("spotify_1", "tidal_1"))
+    album_cache.insert(("spotify_2", "tidal_2"))
+    album_cache.insert(("spotify_3", "tidal_3"))
+    
+    # Verify all entries can be retrieved
+    assert album_cache.get("spotify_1") == "tidal_1"
+    assert album_cache.get("spotify_2") == "tidal_2"
+    assert album_cache.get("spotify_3") == "tidal_3"
+    
+    # Verify nonexistent keys still return None
+    assert album_cache.get("spotify_4") is None
+    
+    # Test overwriting an existing entry
+    album_cache.insert(("spotify_1", "new_tidal_1"))
+    assert album_cache.get("spotify_1") == "new_tidal_1"
