@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
-from .cache import failure_cache, track_match_cache
+from spotify_to_tidal.cache import failure_cache, track_match_cache
 import datetime
 from difflib import SequenceMatcher
 from functools import partial
@@ -11,7 +11,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
+from spotify_to_tidal.tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
 import time
 from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
@@ -19,7 +19,7 @@ import traceback
 import unicodedata
 import math
 
-from .type import spotify as t_spotify
+from spotify_to_tidal.type import spotify as t_spotify
 
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
