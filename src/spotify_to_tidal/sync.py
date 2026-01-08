@@ -55,16 +55,19 @@ def name_match(tidal_track, spotify_track) -> bool:
 
 def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
     def split_artist_name(artist: str) -> Sequence[str]:
-       if '&' in artist:
-           return artist.split('&')
-       elif ',' in artist:
-           return artist.split(',')
-       else:
-           return [artist]
+        if not artist: return ['']
+        if '&' in artist:
+            return artist.split('&')
+        elif ',' in artist:
+            return artist.split(',')
+        else:
+            return [artist]
 
     def get_tidal_artists(tidal: tidalapi.Track | tidalapi.Album, do_normalize=False) -> Set[str]:
         result: list[str] = []
         for artist in tidal.artists:
+            if not artist.name:
+                continue
             if do_normalize:
                 artist_name = normalize(artist.name)
             else:
@@ -239,7 +242,7 @@ def get_tracks_for_new_tidal_playlist(spotify_tracks: Sequence[t_spotify.Spotify
             if tidal_id in seen_tracks:
                 track_name = spotify_track['name']
                 artist_names = ', '.join([artist['name'] for artist in spotify_track['artists']])
-                print(f'Duplicate found: Track "{track_name}" by {artist_names} will be ignored') 
+                print(f'Duplicate found: Track "{track_name}" by {artist_names} will be ignored')
             else:
                 output.append(tidal_id)
                 seen_tracks.add(tidal_id)
@@ -287,7 +290,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         for song in song404:
             file.write(f"{song}\n")
 
-            
+
 async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, spotify_playlist, tidal_playlist: tidalapi.Playlist | None, config: dict):
     """ sync given playlist to tidal """
     # Get the tracks from both Spotify and Tidal, creating a new Tidal playlist if necessary
@@ -321,7 +324,7 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
     async def get_tracks_from_spotify_favorites() -> List[dict]:
-        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
+        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)
         tracks = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, _get_favorite_tracks)
         tracks.reverse()
         return tracks
