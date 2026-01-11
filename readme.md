@@ -37,6 +37,12 @@ or sync just your 'Liked Songs' with:
 spotify_to_tidal --sync-favorites
 ```
 
+or sync just your followed artists with:
+
+```bash
+spotify_to_tidal --sync-artists
+```
+
 See example_config.yml for more configuration options, and `spotify_to_tidal --help` for more options.
 
 ---
