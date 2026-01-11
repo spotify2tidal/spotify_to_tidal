@@ -10,6 +10,7 @@ def main():
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
     parser.add_argument('--sync-favorites', action=argparse.BooleanOptionalAction, help='synchronize the favorites')
+    parser.add_argument('--sync-albums', action=argparse.BooleanOptionalAction, help='synchronize saved albums')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -40,6 +41,9 @@ def main():
 
     if sync_favorites:
         _sync.sync_favorites_wrapper(spotify_session, tidal_session, config)
+
+    if args.sync_albums is None and config.get('sync_albums_default', True) or args.sync_albums:
+        _sync.sync_albums_wrapper(spotify_session, tidal_session, config)
 
 if __name__ == '__main__':
     main()
