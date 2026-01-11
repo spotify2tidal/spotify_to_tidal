@@ -15,11 +15,17 @@ spotify:
 #excluded_playlists:
 #  - spotify:playlist:1ABCDEqsABCD6EaABCDa0a
 
-# default setting for syncing favorites when no command line arguments are provided
-#   - when true:  favorites will be synced by default (overriden when any command line arg provided)
-#   - when false: favorites can only be synced manually via --sync-favorites argument
-sync_favorites_default: true
+# default syncing settings for syncing when no command line arguments are provided
+sync_playlists_default: true # default to sync playlists
+sync_favorites_default: true # default to  sync favorites
+sync_albums_default: true # default to sync albums
+sync_artists_default: true # default to sync followed artists
 
 # increasing these parameters should increase the search speed, while decreasing reduces likelihood of 429 errors
 max_concurrency: 10 # max concurrent connections at any given time
 rate_limit:      10 # max sustained connections per second
+
+# fuzzy matching settings - helps find tracks with slightly different names/spellings
+enable_fuzzy_matching: true    # set to false to disable fuzzy matching (uses only exact matching)
+fuzzy_name_threshold: 0.80     # similarity threshold for track names (0.0-1.0, higher = more strict)
+fuzzy_artist_threshold: 0.75   # similarity threshold for artist names (0.0-1.0, higher = more strict)

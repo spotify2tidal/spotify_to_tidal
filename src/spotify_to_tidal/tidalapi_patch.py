@@ -77,3 +77,21 @@ async def get_all_playlist_tracks(playlist: tidalapi.Playlist, chunk_size: int=2
     print(f"Loading tracks from Tidal playlist '{playlist.name}'")
     return await _get_all_chunks(f"{playlist._base_url%playlist.id}/tracks", session=playlist.session, parser=playlist.session.parse_track, params=params)
 
+async def get_all_saved_albums(user: tidalapi.User, chunk_size: int=20) -> List[tidalapi.Album]:
+    """ Get all saved albums from Tidal user favorites """
+    print(f"Loading saved albums from Tidal")
+    return await asyncio.to_thread(user.favorites.albums_paginated)
+
+def add_album_to_tidal_collection(session: tidalapi.Session, album_id: str):
+    """ Add album to user's Tidal favorites """
+    return session.user.favorites.add_album(album_id)
+
+async def get_all_saved_artists(user: tidalapi.User, chunk_size: int=20) -> List[tidalapi.Artist]:
+    """ Get all followed artists from Tidal user favorites """
+    print(f"Loading followed artists from Tidal")
+    return await asyncio.to_thread(user.favorites.artists_paginated)
+
+def add_artist_to_tidal_collection(session: tidalapi.Session, artist_id: str):
+    """ Add artist to user's Tidal favorites """
+    return session.user.favorites.add_artist(artist_id)
+
