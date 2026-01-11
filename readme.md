@@ -1,11 +1,30 @@
-A command line tool for importing your Spotify playlists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
+> NOTE: this project is forked from: https://github.com/spotify2tidal/spotify_to_tidal and includes the following **enhanced features**:
+>
+> - **NEW**: Support for synchronizing followed artists
+> - **NEW**: Advanced fuzzy matching with configurable thresholds  
+> - **NEW**: Consolidated logging of all unmatched items
+> - **ENHANCED**: Support for synchronizing saved albums (improved matching algorithms)
+>
+> See https://github.com/spotify2tidal/spotify_to_tidal/issues/151 and https://github.com/spotify2tidal/spotify_to_tidal/pull/150
+
+A command line tool for importing your Spotify playlists, saved albums and artists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
 
 Installation
 -----------
 Clone this git repository and then run:
 
 ```bash
-python3 -m pip install -e .
+# Create and activate virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install the project
+pip install -e .
+```
+
+**Note**: Always activate the virtual environment before running any commands:
+```bash
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 Setup
@@ -18,11 +37,37 @@ Setup
 
 Usage
 ----
-To synchronize all of your Spotify playlists with your Tidal account run the following from the project root directory
+To synchronize all of your Spotify playlists, favourites, albums and followed artists with your Tidal account run the following from the project root directory:
 Windows ignores python module paths by default, but you can run them using `python3 -m spotify_to_tidal`
 
 ```bash
 spotify_to_tidal
+```
+
+Use `--sync-playlists`, `--sync-favorites`, `--sync-albums` and/or `--sync-artists` to limit the sync to one or more types. For example:
+
+Synchronise your 'Liked Songs':
+
+```bash
+spotify_to_tidal --sync-favorites
+```
+
+Synchronize your saved albums:
+
+```bash
+spotify_to_tidal --sync-albums
+```
+
+**NEW**: Synchronize your followed artists:
+
+```bash
+spotify_to_tidal --sync-artists
+```
+
+Options can be combined, for example:
+
+```bash
+spotify_to_tidal --sync-favorites --sync-albums --sync-artists
 ```
 
 You can also just synchronize a specific playlist by doing the following:
@@ -31,13 +76,9 @@ You can also just synchronize a specific playlist by doing the following:
 spotify_to_tidal --uri 1ABCDEqsABCD6EaABCDa0a # accepts playlist id or full playlist uri
 ```
 
-or sync just your 'Liked Songs' with:
-
-```bash
-spotify_to_tidal --sync-favorites
-```
-
 See example_config.yml for more configuration options, and `spotify_to_tidal --help` for more options.
+
+**NEW**: After each sync, a consolidated log file `items not found.txt` is created containing all tracks, albums, and artists that couldn't be matched on Tidal, organized by type for easy review.
 
 ---
 
