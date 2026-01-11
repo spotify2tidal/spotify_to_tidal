@@ -61,6 +61,23 @@ async def get_all_favorites(favorites: tidalapi.Favorites, order: str = "NAME", 
     }
     return await _get_all_chunks(f"{favorites.base_url}/tracks", session=favorites.session, parser=favorites.session.parse_track, params=params)
 
+async def get_all_favorite_artists(favorites: tidalapi.Favorites, order: str = "NAME", order_direction: str = "ASC", chunk_size: int=100) -> List[object]:
+    """
+        Get all favorite artists from Tidal in chunks.
+
+        Note: we intentionally keep the return type generic (object) to avoid importing
+        tidalapi artist model symbols at import-time.
+    """
+    params = {
+        "limit": chunk_size,
+        "order": order,
+        "orderDirection": order_direction,
+    }
+    parse_artist = getattr(favorites.session, "parse_artist", None)
+    if parse_artist is None:
+        raise AttributeError("tidalapi session does not expose parse_artist; cannot fetch favorite artists")
+    return await _get_all_chunks(f"{favorites.base_url}/artists", session=favorites.session, parser=parse_artist, params=params)
+
 async def get_all_playlists(user: tidalapi.User, chunk_size: int=10) -> List[tidalapi.Playlist]:
     """ Get all user playlists from Tidal in chunks """
     print(f"Loading playlists from Tidal user")
