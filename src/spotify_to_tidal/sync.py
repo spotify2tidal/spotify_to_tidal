@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
-from .cache import failure_cache, track_match_cache
+from .cache import failure_cache, track_match_cache, album_match_cache
 import datetime
 from difflib import SequenceMatcher
 from functools import partial
@@ -11,7 +11,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
-from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
+from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks, get_all_saved_albums, add_album_to_tidal_collection
 import time
 from tqdm.asyncio import tqdm as atqdm
 from tqdm import tqdm
@@ -24,9 +24,34 @@ from .type import spotify as t_spotify
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
-def simple(input_string: str) -> str:
-    # only take the first part of a string before any hyphens or brackets to account for different versions
-    return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
+def simple(input_string: str) -> list[str]:
+    """
+    Simple progressive text normalization for matching across platforms.
+    Returns two variations: exact (normalized) and simplified (without parentheses).
+    
+    Args:
+        input_string: Text to simplify
+    
+    Returns:
+        List with [exact_normalized, simplified] versions
+    """
+    if not input_string:
+        return [""]
+    
+    text = input_string.strip()
+    
+    # Exact: just normalize whitespace and dashes
+    exact = ' '.join(text.split()).replace('–', '-').replace('—', '-').replace('−', '-')
+    
+    # Simplified: remove everything in parentheses/brackets
+    simplified = text.split('(')[0].split('[')[0].strip()
+    simplified = ' '.join(simplified.split()).replace('–', '-').replace('—', '-').replace('−', '-')
+    
+    # Return both variations, avoiding duplicates
+    if exact == simplified:
+        return [exact]
+    else:
+        return [exact, simplified]
 
 def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
     if "isrc" in spotify_track["external_ids"]:
@@ -50,7 +75,7 @@ def name_match(tidal_track, spotify_track) -> bool:
 
     # the simplified version of the Spotify track name must be a substring of the Tidal track name
     # Try with both un-normalized and then normalized
-    simple_spotify_track = simple(spotify_track['name'].lower()).split('feat.')[0].strip()
+    simple_spotify_track = simple(spotify_track['name'])[0].lower().split('feat.')[0].strip()
     return simple_spotify_track in tidal_track.name.lower() or normalize(simple_spotify_track) in normalize(tidal_track.name.lower())
 
 def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
@@ -59,6 +84,8 @@ def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
            return artist.split('&')
        elif ',' in artist:
            return artist.split(',')
+       elif ' and ' in artist.lower():
+           return artist.lower().split(' and ')
        else:
            return [artist]
 
@@ -70,7 +97,7 @@ def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
             else:
                 artist_name = artist.name
             result.extend(split_artist_name(artist_name))
-        return set([simple(x.strip().lower()) for x in result])
+        return set([simple(x.strip())[0].lower() for x in result])
 
     def get_spotify_artists(spotify, do_normalize=False) -> Set[str]:
         result: list[str] = []
@@ -80,7 +107,7 @@ def artist_match(tidal: tidalapi.Track | tidalapi.Album, spotify) -> bool:
             else:
                 artist_name = artist['name']
             result.extend(split_artist_name(artist_name))
-        return set([simple(x.strip().lower()) for x in result])
+        return set([simple(x.strip())[0].lower() for x in result])
     # There must be at least one overlapping artist between the Tidal and Spotify track
     # Try with both un-normalized and then normalized
     if get_tidal_artists(tidal).intersection(get_spotify_artists(spotify)) != set():
@@ -96,13 +123,17 @@ def match(tidal_track, spotify_track) -> bool:
     )
 
 def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
-    return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
+    spotify_simple = simple(spotify_album['name'])[0]
+    tidal_simple = simple(tidal_album.name)[0]
+    return SequenceMatcher(None, spotify_simple, tidal_simple).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-            query = simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name'])
+            album_simple = simple(spotify_track['album']['name'])[0]
+            artist_simple = simple(spotify_track['album']['artists'][0]['name'])[0]
+            query = f"{album_simple} {artist_simple}"
             album_result = tidal_session.search(query, models=[tidalapi.album.Album])
             for album in album_result['albums']:
                 if album.num_tracks >= spotify_track['track_number'] and test_album_similarity(spotify_track['album'], album):
@@ -117,7 +148,9 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
 
     def _search_for_standalone_track():
         # if album search fails then search for track name and first artist
-        query = simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name'])
+        track_simple = simple(spotify_track['name'])[0]
+        artist_simple = simple(spotify_track['artists'][0]['name'])[0]
+        query = f"{track_simple} {artist_simple}"
         for track in tidal_session.search(query, models=[tidalapi.media.Track])['tracks']:
             if match(track, spotify_track):
                 failure_cache.remove_match_failure(spotify_track['id'])
@@ -257,7 +290,7 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
             dt = (t - t0).total_seconds()
             new_items = round(config.get('rate_limit', 10)*dt)
             t0 = t
-            [semaphore.release() for i in range(new_items)] # leak new_items from the 'bucket'
+            [semaphore.release() for _ in range(new_items)] # leak new_items from the 'bucket'
 
     # Extract the new tracks that do not already exist in the old tidal tracklist
     tracks_to_search = get_new_spotify_tracks(spotify_tracks)
@@ -355,6 +388,338 @@ def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tida
 
 def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
+
+async def sync_albums(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    """ sync saved albums from Spotify to Tidal """
+    async def get_albums_from_spotify_saved() -> List[dict]:
+        async def _fetch_all_albums_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
+            output = []
+            results = fetch_function(0)
+            output.extend([item['album'] for item in results['items'] if item['album'] is not None])
+
+            # Get all the remaining albums in parallel
+            if results['next']:
+                offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
+                extra_results = await atqdm.gather(
+                    *[asyncio.to_thread(fetch_function, offset) for offset in offsets],
+                    desc="Fetching additional data chunks"
+                )
+                for extra_result in extra_results:
+                    output.extend([item['album'] for item in extra_result['items'] if item['album'] is not None])
+
+            return output
+
+        _get_saved_albums = lambda offset: spotify_session.current_user_saved_albums(offset=offset)
+        albums = await repeat_on_request_error(_fetch_all_albums_from_spotify_in_chunks, _get_saved_albums)
+        albums.reverse() 
+        return albums
+
+    def get_new_tidal_albums() -> List[str]:
+        existing_album_ids = set([album.id for album in old_tidal_albums])
+        new_ids = []
+        for spotify_album in spotify_albums:
+            match_id = album_match_cache.get(spotify_album['id'])
+            if match_id and not match_id in existing_album_ids:
+                new_ids.append(match_id)
+        return new_ids
+
+    print("Loading saved albums from Spotify")
+    spotify_albums = await get_albums_from_spotify_saved()
+    print("Loading existing albums from Tidal")
+    old_tidal_albums = await get_all_saved_albums(tidal_session.user)
+    populate_album_match_cache(spotify_albums, old_tidal_albums, config)
+    await search_new_albums_on_tidal(tidal_session, spotify_albums, config)
+    new_tidal_album_ids = get_new_tidal_albums()
+    
+    if new_tidal_album_ids:
+        for tidal_id in tqdm(new_tidal_album_ids, desc="Adding new albums to Tidal"):
+            add_album_to_tidal_collection(tidal_session, tidal_id)
+    else:
+        print("No new albums to add to Tidal")
+
+def album_match(tidal_album: tidalapi.Album, spotify_album: dict, config: dict = None) -> bool:
+    """ Check if a Tidal album matches a Spotify album using progressive matching """
+    
+    # Get progressive simplifications for album names (preserve edition info)
+    spotify_variations = simple(spotify_album['name'])
+    tidal_variations = simple(tidal_album.name)
+    
+    fuzzy_threshold = config.get('fuzzy_name_threshold', 0.80) if config else 0.80
+    
+    # Try each combination of variations (strictest first)
+    album_name_matches = False
+    for spotify_name in spotify_variations:
+        for tidal_name in tidal_variations:
+            spotify_lower = spotify_name.lower()
+            tidal_lower = tidal_name.lower()
+            
+            # Exact substring match
+            if spotify_lower in tidal_lower or tidal_lower in spotify_lower:
+                album_name_matches = True
+                break
+                
+            # Unicode normalized match
+            norm_spotify = normalize(spotify_lower)
+            norm_tidal = normalize(tidal_lower)
+            if norm_spotify in norm_tidal or norm_tidal in norm_spotify:
+                album_name_matches = True
+                break
+                
+            # Fuzzy matching (if enabled)
+            if config and config.get('enable_fuzzy_matching', False):
+                similarity = SequenceMatcher(None, spotify_lower, tidal_lower).ratio()
+                norm_similarity = SequenceMatcher(None, norm_spotify, norm_tidal).ratio()
+                
+                if similarity >= fuzzy_threshold or norm_similarity >= fuzzy_threshold:
+                    album_name_matches = True
+                    break
+        
+        if album_name_matches:
+            break
+    
+    if not album_name_matches:
+        return False
+    
+    # Artist matching using progressive simplification
+    def get_artists(album):
+        """Extract artist names from an album"""
+        if hasattr(album, 'artists'):  # Tidal album
+            return [artist.name for artist in album.artists]
+        else:  # Spotify album
+            return [artist['name'] for artist in album['artists']]
+    
+    def split_artists(artist_names):
+        """Split artist names on common separators"""
+        result = []
+        for artist_name in artist_names:
+            if '&' in artist_name:
+                result.extend(artist_name.split('&'))
+            elif ',' in artist_name:
+                result.extend(artist_name.split(','))
+            elif ' and ' in artist_name.lower():
+                result.extend([part for part in artist_name.lower().split(' and ')])
+            else:
+                result.append(artist_name)
+        return [name.strip() for name in result]
+    
+    # Get all artist variations for both albums
+    tidal_artists = split_artists(get_artists(tidal_album))
+    spotify_artists = split_artists(get_artists(spotify_album))
+    
+    fuzzy_artist_threshold = config.get('fuzzy_artist_threshold', 0.75) if config else 0.75
+    
+    # Try progressive matching for artists
+    for tidal_artist in tidal_artists:
+        tidal_variations = simple(tidal_artist)
+        
+        for spotify_artist in spotify_artists:
+            spotify_variations = simple(spotify_artist)
+            
+            # Try each combination of variations
+            for tidal_var in tidal_variations:
+                for spotify_var in spotify_variations:
+                    tidal_lower = tidal_var.lower()
+                    spotify_lower = spotify_var.lower()
+                    
+                    # Exact match
+                    if tidal_lower == spotify_lower:
+                        return True
+                    
+                    # Substring match
+                    if tidal_lower in spotify_lower or spotify_lower in tidal_lower:
+                        return True
+                    
+                    # Unicode normalized match
+                    norm_tidal = normalize(tidal_lower)
+                    norm_spotify = normalize(spotify_lower)
+                    if norm_tidal == norm_spotify:
+                        return True
+                    
+                    # Fuzzy matching
+                    if config and config.get('enable_fuzzy_matching', False):
+                        similarity = SequenceMatcher(None, tidal_lower, spotify_lower).ratio()
+                        norm_similarity = SequenceMatcher(None, norm_tidal, norm_spotify).ratio()
+                        
+                        if similarity >= fuzzy_artist_threshold or norm_similarity >= fuzzy_artist_threshold:
+                            return True
+    
+    return False
+
+def populate_album_match_cache(spotify_albums: Sequence[dict], tidal_albums: Sequence[tidalapi.Album], config: dict = None):
+    """ 
+    Populate the album match cache with existing albums.
+    Optimized to O(n*m) complexity using sets to track matched albums.
+    """
+    # Track which albums have already been matched to avoid duplicates
+    matched_spotify_ids = set()
+    matched_tidal_ids = set()
+    
+    # First pass: match tidal albums to spotify albums
+    for tidal_album in tidal_albums:
+        if tidal_album.id in matched_tidal_ids:
+            continue
+        
+        for spotify_album in spotify_albums:
+            if spotify_album['id'] in matched_spotify_ids:
+                continue
+                
+            if album_match(tidal_album, spotify_album, config):
+                album_match_cache.insert((spotify_album['id'], tidal_album.id))
+                matched_spotify_ids.add(spotify_album['id'])
+                matched_tidal_ids.add(tidal_album.id)
+                break
+    
+    # Second pass: match remaining spotify albums to remaining tidal albums
+    for spotify_album in spotify_albums:
+        if spotify_album['id'] in matched_spotify_ids:
+            continue
+            
+        for tidal_album in tidal_albums:
+            if tidal_album.id in matched_tidal_ids:
+                continue
+                
+            if album_match(tidal_album, spotify_album, config):
+                album_match_cache.insert((spotify_album['id'], tidal_album.id))
+                matched_spotify_ids.add(spotify_album['id'])
+                matched_tidal_ids.add(tidal_album.id)
+                break
+
+async def search_new_albums_on_tidal(tidal_session: tidalapi.Session, spotify_albums: Sequence[dict], config: dict):
+    """ Search for Spotify albums on Tidal and cache the results """
+    def get_new_spotify_albums(spotify_albums: Sequence[dict]) -> List[dict]:
+        results = []
+        for spotify_album in spotify_albums:
+            if not spotify_album['id']: continue
+            if not album_match_cache.get(spotify_album['id']):
+                results.append(spotify_album)
+        return results
+    
+    async def tidal_album_search(spotify_album, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Album | None:
+        if not ('artists' in spotify_album and len(spotify_album['artists'])):
+            return None
+            
+        # Progressive search strategy - try stronger matches first, then loosen
+        search_queries = []
+        album_name = spotify_album['name']
+        artist_name = spotify_album['artists'][0]['name']
+        
+        # Get progressive variations for both album and artist
+        album_variations = simple(album_name)
+        artist_variations = simple(artist_name)
+        
+        # Create search queries from combinations of variations
+        for album_var in album_variations:
+            for artist_var in artist_variations:
+                # Full search (album + artist)
+                search_queries.append(f"{album_var} {artist_var}")
+                
+                # Album + simplified artist (first part only)
+                artist_first_part = artist_var.split('&')[0].strip().split(' and ')[0].strip()
+                if artist_first_part != artist_var:
+                    search_queries.append(f"{album_var} {artist_first_part}")
+        
+        # Album only search with the most simplified version
+        if album_variations:
+            search_queries.append(album_variations[-1])  # Most simplified version
+        
+        # Special case for apostrophes
+        if "'" in album_name:
+            no_apostrophe_album = simple(album_name.replace("'", ""))
+            if no_apostrophe_album and artist_variations:
+                search_queries.append(f"{no_apostrophe_album[0]} {artist_variations[0]}")
+        
+        # Remove duplicates while preserving order
+        unique_queries = []
+        seen = set()
+        for query in search_queries:
+            if query not in seen:
+                unique_queries.append(query)
+                seen.add(query)
+        search_queries = unique_queries
+        
+        # Try each search query until we find a match
+        for i, query in enumerate(search_queries):
+            await rate_limiter.acquire()
+            try:
+                album_result = tidal_session.search(query, models=[tidalapi.album.Album])
+                if album_result and 'albums' in album_result and len(album_result['albums']) > 0:
+                    print(f"  Search query {i+1}/6 '{query}' found {len(album_result['albums'])} results")
+                    for tidal_album in album_result['albums']:
+                        if album_match(tidal_album, spotify_album, config):
+                            print(f"  ✓ Match found using query: '{query}'")
+                            return tidal_album
+                else:
+                    print(f"  Search query {i+1}/6 '{query}' found no results")
+            except Exception as e:
+                # Continue to next query if this one fails
+                print(f"  Search query {i+1}/6 '{query}' failed: {e}")
+                continue
+        
+        # 6. Last resort: search by artist name only and check all albums
+        # This handles cases where Tidal search doesn't return albums that exist
+        await rate_limiter.acquire()
+        artist_simple = simple(artist_name)[-1]  # Most simplified
+        print(f"  Final search: artist-only '{artist_simple}'")
+        try:
+            artist_result = tidal_session.search(artist_simple, models=[tidalapi.album.Album])
+            if artist_result and 'albums' in artist_result:
+                print(f"  Artist-only search found {len(artist_result['albums'])} albums")
+                for tidal_album in artist_result['albums']:
+                    if album_match(tidal_album, spotify_album, config):
+                        print(f"  ✓ Match found using artist-only search")
+                        return tidal_album
+            else:
+                print(f"  Artist-only search found no results")
+        except Exception as e:
+            print(f"  Artist-only search for '{artist_simple}' failed: {e}")
+                
+        return None
+    
+    # Rate limiter setup similar to track search
+    async def _run_rate_limiter(semaphore):
+        _sleep_time = config.get('max_concurrency', 10)/config.get('rate_limit', 10)/4
+        t0 = datetime.datetime.now()
+        while True:
+            await asyncio.sleep(_sleep_time)
+            t = datetime.datetime.now()
+            dt = (t - t0).total_seconds()
+            new_items = round(config.get('rate_limit', 10)*dt)
+            t0 = t
+            [semaphore.release() for _ in range(new_items)]
+
+    albums_to_search = get_new_spotify_albums(spotify_albums)
+    if not albums_to_search:
+        return
+
+    # Search for each album on Tidal concurrently
+    task_description = f"Searching Tidal for {len(albums_to_search)}/{len(spotify_albums)} albums"
+    semaphore = asyncio.Semaphore(config.get('max_concurrency', 10))
+    rate_limiter_task = asyncio.create_task(_run_rate_limiter(semaphore))
+    search_results = await atqdm.gather(*[repeat_on_request_error(tidal_album_search, a, semaphore, tidal_session) for a in albums_to_search], desc=task_description)
+    rate_limiter_task.cancel()
+
+    # Add search results to cache
+    albums_not_found = []
+    for idx, spotify_album in enumerate(albums_to_search):
+        if search_results[idx]:
+            album_match_cache.insert((spotify_album['id'], search_results[idx].id))
+        else:
+            album_info = f"{spotify_album['id']}: {','.join([a['name'] for a in spotify_album['artists']])} - {spotify_album['name']}"
+            albums_not_found.append(album_info)
+            color = ('\033[91m', '\033[0m')
+            print(color[0] + "Could not find album " + album_info + color[1])
+    
+    # Log albums not found
+    if albums_not_found:
+        file_name = "albums not found.txt"
+        header = f"==========================\nSaved Albums Sync\n==========================\n"
+        with open(file_name, "a", encoding="utf-8") as file:
+            file.write(header)
+            for album in albums_not_found:
+                file.write(f"{album}\n")
+
+def sync_albums_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
+    asyncio.run(sync_albums(spotify_session, tidal_session, config))
 
 def get_tidal_playlists_wrapper(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     tidal_playlists = asyncio.run(get_all_playlists(tidal_session.user))
