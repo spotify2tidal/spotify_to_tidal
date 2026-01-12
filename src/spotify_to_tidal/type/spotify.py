@@ -1,5 +1,6 @@
+from typing import Dict, List, Literal, Mapping, Optional, TypedDict
+
 from spotipy import Spotify
-from typing import TypedDict, List, Dict, Mapping, Literal, Optional
 
 
 class SpotifyImage(TypedDict):
