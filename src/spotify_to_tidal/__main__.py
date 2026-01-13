@@ -6,10 +6,11 @@ from . import sync as _sync
 from . import auth as _auth
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog="spotify_to_tidal")
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
     parser.add_argument('--sync-favorites', action=argparse.BooleanOptionalAction, help='synchronize the favorites')
+    parser.add_argument('--favs-to-playlist', metavar='PLAYLIST_NAME', help='synchronize Spotify favorites to specific Tidal playlist')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -29,6 +30,14 @@ def main():
         sync_favorites = args.sync_favorites # only sync favorites if command line argument explicitly passed
     elif args.sync_favorites:
         sync_favorites = True # sync only the favorites
+    elif args.favs_to_playlist:
+        # get tidal playlist by name if it exists
+        tidal_playlist = None
+        tidal_playlists = _sync.get_tidal_playlists_wrapper(tidal_session)
+        if args.favs_to_playlist in tidal_playlists:
+            tidal_playlist = tidal_playlists[args.favs_to_playlist]
+        _sync.sync_favorites_to_playlist_wrapper(spotify_session, tidal_session, tidal_playlist, args.favs_to_playlist, config)
+        sync_favorites = False # favs are already being synced
     elif config.get('sync_playlists', None):
         # if the config contains a sync_playlists list of mappings then use that
         _sync.sync_playlists_wrapper(spotify_session, tidal_session, _sync.get_playlists_from_config(spotify_session, tidal_session, config), config)
