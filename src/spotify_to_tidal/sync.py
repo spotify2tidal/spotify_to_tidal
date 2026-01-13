@@ -318,6 +318,40 @@ async def sync_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalap
         clear_tidal_playlist(tidal_playlist)
         add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids)
 
+async def sync_favorites_to_playlist(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, tidal_playlist: tidalapi.Playlist | None, tidal_playlist_name: str, config: dict):
+    """ sync user favorites to tidal playlist """
+    async def get_tracks_from_spotify_favorites() -> List[dict]:
+        _get_favorite_tracks = lambda offset: spotify_session.current_user_saved_tracks(offset=offset)    
+        tracks = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, _get_favorite_tracks)
+        tracks.reverse()
+        return tracks
+
+    print("Loading favorite tracks from Spotify")
+    spotify_tracks = await get_tracks_from_spotify_favorites()
+    
+    if tidal_playlist:
+        old_tidal_tracks = await get_all_playlist_tracks(tidal_playlist)
+    else:
+        print(f"No playlist found on Tidal with provided name: '{tidal_playlist_name}', creating new playlist")
+        tidal_playlist =  tidal_session.user.create_playlist(tidal_playlist_name, "")
+        old_tidal_tracks = []
+    
+    populate_track_match_cache(spotify_tracks, old_tidal_tracks)
+    await search_new_tracks_on_tidal(tidal_session, spotify_tracks, "Favorites", config)
+    new_tidal_track_ids = get_tracks_for_new_tidal_playlist(spotify_tracks)
+    
+    # Update the Tidal playlist if there are changes
+    old_tidal_track_ids = [t.id for t in old_tidal_tracks]
+    if new_tidal_track_ids == old_tidal_track_ids:
+        print("No changes to write to Tidal playlist")
+    elif new_tidal_track_ids[:len(old_tidal_track_ids)] == old_tidal_track_ids:
+        # Append new tracks to the existing playlist if possible
+        add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids[len(old_tidal_track_ids):])
+    else:
+        # Erase old playlist and add new tracks from scratch if any reordering occured
+        clear_tidal_playlist(tidal_playlist)
+        add_multiple_tracks_to_playlist(tidal_playlist, new_tidal_track_ids)
+
 async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config: dict):
     """ sync user favorites to tidal """
     async def get_tracks_from_spotify_favorites() -> List[dict]:
@@ -355,6 +389,9 @@ def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tida
 
 def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
+
+def sync_favorites_to_playlist_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, tidal_playlist: tidalapi.Playlist | None, tidal_playlist_name: str, config):
+    asyncio.run(main=sync_favorites_to_playlist(spotify_session=spotify_session, tidal_session=tidal_session, tidal_playlist=tidal_playlist, tidal_playlist_name=tidal_playlist_name, config=config))
 
 def get_tidal_playlists_wrapper(tidal_session: tidalapi.Session) -> Mapping[str, tidalapi.Playlist]:
     tidal_playlists = asyncio.run(get_all_playlists(tidal_session.user))
