@@ -1,4 +1,4 @@
-A command line tool for importing your Spotify playlists into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
+A command line tool for importing your Spotify playlists, the songs you like, and the artists you follow into Tidal. Due to various performance optimisations, it is particularly suited for periodic synchronisation of very large collections.
 
 Installation
 -----------
@@ -35,6 +35,12 @@ or sync just your 'Liked Songs' with:
 
 ```bash
 spotify_to_tidal --sync-favorites
+```
+
+or sync just the artists you follow with:
+
+```bash
+spotify_to_tidal --sync-artists
 ```
 
 See example_config.yml for more configuration options, and `spotify_to_tidal --help` for more options.
