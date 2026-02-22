@@ -34,3 +34,4 @@ dmypy.json
 
 # Visual Studio Code
 .vscode/
+example_config.yml
