@@ -19,13 +19,13 @@ SpotifySession = Spotify
 
 class SpotifyArtist(TypedDict):
     external_urls: Mapping[str, str]
-    followers: SpotifyFollower
-    genres: List[str]
+    followers: Optional[SpotifyFollower]  # Removed from API in Feb 2026
+    genres: Optional[List[str]]  # Removed from API in Feb 2026
     href: str
     id: str
     images: List[SpotifyImage]
     name: str
-    popularity: int
+    popularity: Optional[int]  # Removed from API in Feb 2026
     type: str
     uri: str
 
@@ -33,7 +33,7 @@ class SpotifyArtist(TypedDict):
 class SpotifyAlbum(TypedDict):
     album_type: Literal["album", "single", "compilation"]
     total_tracks: int
-    available_markets: List[str]
+    available_markets: Optional[List[str]]  # Removed from API in Feb 2026
     external_urls: Dict[str, str]
     href: str
     id: str
@@ -50,19 +50,19 @@ class SpotifyAlbum(TypedDict):
 class SpotifyTrack(TypedDict):
     album: SpotifyAlbum
     artists: List[SpotifyArtist]
-    available_markets: List[str]
+    available_markets: Optional[List[str]]  # Removed from API in Feb 2026
     disc_number: int
     duration_ms: int
     explicit: bool
-    external_ids: Dict[str, str]
+    external_ids: Optional[Dict[str, str]]  # Removed from API in Feb 2026
     external_urls: Dict[str, str]
     href: str
     id: str
     is_playable: bool
-    linked_from: Dict
+    linked_from: Optional[Dict]  # Removed from API in Feb 2026
     restrictions: Optional[Dict[Literal["reason"], str]]
     name: str
-    popularity: int
+    popularity: Optional[int]  # Removed from API in Feb 2026
     preview_url: str
     track_number: int
     type: Literal["track"]

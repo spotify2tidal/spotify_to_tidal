@@ -28,10 +28,8 @@ def simple(input_string: str) -> str:
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
 def isrc_match(tidal_track: tidalapi.Track, spotify_track) -> bool:
-    """Match by ISRC if external_ids is present. Note: external_ids may not be
-    available on all Spotify API endpoints."""
-    if "isrc" in spotify_track.get("external_ids", {}):
-        return tidal_track.isrc == spotify_track["external_ids"]["isrc"]
+    """Match by ISRC if external_ids is present. Note: external_ids has been removed
+    from Spotify API as of February 2026."""
     return False
 
 def duration_match(tidal_track: tidalapi.Track, spotify_track, tolerance=2) -> bool:
@@ -180,8 +178,24 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(item(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
-        return spotify_session.playlist_items(playlist_id=playlist_id, fields=fields, offset=offset)
+        # Use new API endpoint /playlists/{id}/items instead of deprecated /playlists/{id}/tracks
+        # The /playlists/{id}/tracks endpoint was removed in February 2026
+        url = f"https://api.spotify.com/v1/playlists/{playlist_id}/items"
+        # Get access token - ensure we get it as a string, not a dict
+        token_info = spotify_session.auth_manager.get_access_token(as_dict=True)
+        if isinstance(token_info, dict):
+            access_token = token_info.get('access_token')
+        else:
+            access_token = token_info
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = {
+            "limit": 100,
+            "offset": offset,
+            "fields": "next,total,limit,items(item(name,album(name,artists),artists,track_number,duration_ms,id)),type"
+        }
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
 
@@ -190,8 +204,13 @@ async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spo
         lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]),
     )
 
-    items = chain.from_iterable(r['items'] for r in responses)
-    items_data= [item['item'] for item in items]
+    # Check if the response contains items (may not contain items for playlists not owned by user)
+    if not responses or 'items' not in responses[0]:
+        print(f"Warning: No items found in playlist. This may be a playlist you don't have access to.")
+        return []
+
+    items = chain.from_iterable(r.get('items', []) for r in responses)
+    items_data = [item['item'] for item in items if 'item' in item and item['item'] is not None]
 
     track_filter = lambda item: item.get('type', 'track') == 'track' # type may be 'episode' also
     sanity_filter = lambda item: ('album' in item
