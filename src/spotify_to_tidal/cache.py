@@ -1,6 +1,6 @@
 import datetime
 import sqlalchemy
-from sqlalchemy import Table, Column, String, DateTime, MetaData, insert, select, update, delete
+from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData, insert, select, update, delete
 from typing import Dict, List, Sequence, Set, Mapping
 
 
@@ -67,16 +67,31 @@ class MatchFailureDatabase:
 
 class TrackMatchCache:
     """
-    Non-persistent mapping of spotify ids -> tidal_ids
+    Persistent mapping of spotify ids -> tidal_ids
     This should NOT be accessed concurrently from multiple processes
     """
-    data: Dict[str, int] = {}
+    def __init__(self, filename='.cache.db'):
+        self.engine = sqlalchemy.create_engine(f"sqlite:///{filename}")
+        meta = MetaData()
+        self.match_successes = Table('match_successes', meta,
+                                     Column('spotify_id', String, primary_key=True),
+                                     Column('tidal_id', Integer),
+                                     sqlite_autoincrement=False)
+        meta.create_all(self.engine)
+        self.data: Dict[str, int] = {}
+        with self.engine.connect() as connection:
+            for row in connection.execute(select(self.match_successes)).fetchall():
+                self.data[row.spotify_id] = row.tidal_id
 
     def get(self, track_id: str) -> int | None:
         return self.data.get(track_id, None)
 
     def insert(self, mapping: tuple[str, int]):
-        self.data[mapping[0]] = mapping[1]
+        if mapping[0] not in self.data:
+            self.data[mapping[0]] = mapping[1]
+            with self.engine.connect() as connection:
+                with connection.begin():
+                    connection.execute(insert(self.match_successes), {"spotify_id": mapping[0], "tidal_id": mapping[1]})
 
 
 # Main singleton instance
