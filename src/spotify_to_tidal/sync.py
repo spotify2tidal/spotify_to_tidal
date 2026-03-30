@@ -24,7 +24,9 @@ from .type import spotify as t_spotify
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
-def simple(input_string: str) -> str:
+def simple(input_string: str | None) -> str:
+    if not input_string:
+        return ""
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
@@ -280,7 +282,8 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         if search_results[idx]:
             track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
         else:
-            song404.append(f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}")
+            artist_names = ",".join([a.get('name') or "Unknown Artist" for a in spotify_track.get('artists', [])])
+            song404.append(f"{spotify_track['id']}: {artist_names} - {spotify_track.get('name') or 'Unknown Track'}")
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find the track " + song404[-1] + color[1])
     file_name = "songs not found.txt"
