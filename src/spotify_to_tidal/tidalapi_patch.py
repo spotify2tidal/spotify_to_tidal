@@ -18,14 +18,17 @@ def clear_tidal_playlist(playlist: tidalapi.UserPlaylist, chunk_size: int=20):
             _remove_indices_from_playlist(playlist, indices)
             progress.update(len(indices))
     
-def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: List[int], chunk_size: int=20):
-    offset = 0
-    with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
-        while offset < len(track_ids):
-            count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
-            offset += count
-            progress.update(count)
+def add_multiple_tracks_to_playlist(playlist, track_ids, chunk_size=20):
+    for offset in tqdm(range(0, len(track_ids), chunk_size), desc="Adding new tracks to Tidal playlist"):
+        chunk = track_ids[offset:offset+chunk_size]
+        try:
+            playlist.add(chunk)
+        except Exception:
+            for track_id in chunk:
+                try:
+                    playlist.add([track_id])
+                except Exception:
+                    print(f"Skipping track that Tidal refused to add: {track_id}")
 
 async def _get_all_chunks(url, session, parser, params={}) -> List[tidalapi.Track]:
     """ 

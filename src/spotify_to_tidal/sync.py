@@ -24,7 +24,9 @@ from .type import spotify as t_spotify
 def normalize(s) -> str:
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
 
-def simple(input_string: str) -> str:
+def simple(input_string: str | None) -> str:
+    if not input_string:
+        return ""
     # only take the first part of a string before any hyphens or brackets to account for different versions
     return input_string.split('-')[0].strip().split('(')[0].strip().split('[')[0].strip()
 
@@ -161,9 +163,12 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
 async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
 
-    # Get all the remaining tracks in parallel
+    for item in results.get("items", []):
+        track = item.get("track") or item.get("item")
+        if track:
+            output.append(track)
+
     if results['next']:
         offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
         extra_results = await atqdm.gather(
@@ -171,25 +176,25 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            for item in extra_result.get("items", []):
+                track = item.get("track") or item.get("item")
+                if track:
+                    output.append(track)
 
     return output
 
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
-        return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
+        return spotify_session.playlist_tracks(playlist_id=playlist_id, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    items = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
-    track_filter = lambda item: item.get('type', 'track') == 'track' # type may be 'episode' also
-    sanity_filter = lambda item: ('album' in item
-                                  and 'name' in item['album']
-                                  and 'artists' in item['album']
-                                  and len(item['album']['artists']) > 0
-                                  and item['album']['artists'][0]['name'] is not None)
-    return list(filter(sanity_filter, filter(track_filter, items)))
+    items = await repeat_on_request_error(
+        _fetch_all_from_spotify_in_chunks,
+        lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"])
+    )
+
+    return items
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """
@@ -277,7 +282,8 @@ async def search_new_tracks_on_tidal(tidal_session: tidalapi.Session, spotify_tr
         if search_results[idx]:
             track_match_cache.insert( (spotify_track['id'], search_results[idx].id) )
         else:
-            song404.append(f"{spotify_track['id']}: {','.join([a['name'] for a in spotify_track['artists']])} - {spotify_track['name']}")
+            artist_names = ",".join([a.get('name') or "Unknown Artist" for a in spotify_track.get('artists', [])])
+            song404.append(f"{spotify_track['id']}: {artist_names} - {spotify_track.get('name') or 'Unknown Track'}")
             color = ('\033[91m', '\033[0m')
             print(color[0] + "Could not find the track " + song404[-1] + color[1])
     file_name = "songs not found.txt"
