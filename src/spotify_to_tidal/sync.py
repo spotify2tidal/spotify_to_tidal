@@ -161,35 +161,46 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
 async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
 
-    # Get all the remaining tracks in parallel
-    if results['next']:
-        offsets = [results['limit'] * n for n in range(1, math.ceil(results['total'] / results['limit']))]
+    # Safely extract tracks from the first page
+    for item in results.get("items", []):
+        track = item.get("track") or item.get("item")
+        if track:
+            output.append(track)
+
+    # Fetch the remaining pages if there are more tracks
+    if results.get("next"):
+        limit = results.get("limit", 100)
+        total = results.get("total", 0)
+        offsets = [limit * n for n in range(1, math.ceil(total / limit))]
         extra_results = await atqdm.gather(
             *[asyncio.to_thread(fetch_function, offset) for offset in offsets],
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            for item in extra_result.get("items", []):
+                track = item.get("track") or item.get("item")
+                if track:
+                    output.append(track)
 
     return output
 
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
-        return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
+        # CRITICAL CHANGE: Use the new playlist_items endpoint instead of playlist_tracks
+        return spotify_session.playlist_items(playlist_id=playlist_id, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
-    items = await repeat_on_request_error( _fetch_all_from_spotify_in_chunks, lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"]))
-    track_filter = lambda item: item.get('type', 'track') == 'track' # type may be 'episode' also
-    sanity_filter = lambda item: ('album' in item
-                                  and 'name' in item['album']
-                                  and 'artists' in item['album']
-                                  and len(item['album']['artists']) > 0
-                                  and item['album']['artists'][0]['name'] is not None)
-    return list(filter(sanity_filter, filter(track_filter, items)))
+    items = await repeat_on_request_error(
+        _fetch_all_from_spotify_in_chunks,
+        lambda offset: _get_tracks_from_spotify_playlist(offset=offset, playlist_id=spotify_playlist["id"])
+    )
+
+    # Optional: Print the total number of tracks found
+    # print(f"DEBUG: Final tracks ready to search on Tidal: {len(items)}")
+    
+    return items
 
 def populate_track_match_cache(spotify_tracks_: Sequence[t_spotify.SpotifyTrack], tidal_tracks_: Sequence[tidalapi.Track]):
     """ Populate the track match cache with all the existing tracks in Tidal playlist corresponding to Spotify playlist """

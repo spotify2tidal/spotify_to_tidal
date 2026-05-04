@@ -19,11 +19,25 @@ def clear_tidal_playlist(playlist: tidalapi.UserPlaylist, chunk_size: int=20):
             progress.update(len(indices))
     
 def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: List[int], chunk_size: int=20):
+    import requests
     offset = 0
     with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
+            chunk = track_ids[offset:offset+chunk_size]
+            try:
+                playlist.add(chunk)
+            except requests.exceptions.HTTPError as e:
+                # If Tidal rejects the chunk (e.g., 412 error due to regional block), fallback to adding tracks one by one
+                if e.response is not None and e.response.status_code == 412:
+                    for track_id in chunk:
+                        try:
+                            playlist.add([track_id])
+                        except Exception:
+                            # Silently ignore the problematic track and continue
+                            pass
+                else:
+                    raise e # If it's a different error, raise it normally
             offset += count
             progress.update(count)
 
