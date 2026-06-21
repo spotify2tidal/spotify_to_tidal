@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from functools import partial
 from typing import Callable, List, Sequence, Set, Mapping
 import math
+import sqlalchemy.exc
 import requests
 import sys
 import spotipy
@@ -138,7 +139,7 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     # utility to repeat calling the function up to 5 times if an exception is thrown
     try:
         return await function(*args, **kwargs)
-    except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException, spotipy.exceptions.SpotifyException) as e:
+    except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException, spotipy.exceptions.SpotifyException, sqlalchemy.exc.OperationalError) as e:
         if remaining:
             print(f"{str(e)} occurred, retrying {remaining} times")
         else:
@@ -158,10 +159,16 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
+def _extract_track(item: dict):
+    """ Spotify's API has been observed returning the track payload under either
+    the 'track' key (documented) or the 'item' key (seen in practice for some
+    accounts as of 2026). Support both so we don't break either way. """
+    return item.get('track') if 'track' in item else item.get('item')
+
 async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+    output.extend([t for item in results['items'] if (t := _extract_track(item)) is not None])
 
     # Get all the remaining tracks in parallel
     if results['next']:
@@ -171,14 +178,14 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            output.extend([t for item in extra_result['items'] if (t := _extract_track(item)) is not None])
 
     return output
 
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
+        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)),item(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
         return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
