@@ -1,6 +1,8 @@
 import asyncio
 import math
+import time
 from typing import List
+import requests
 import tidalapi
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as atqdm
@@ -23,7 +25,22 @@ def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: 
     with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
+            # The playlist's _etag can go stale (e.g. due to a previous failed/retried
+            # request, or any other change to the playlist), which causes Tidal's API
+            # to reject the request with a 412 Precondition Failed error. Refresh the
+            # etag and retry the same chunk a few times before giving up on it.
+            remaining_retries = 3
+            while True:
+                try:
+                    playlist.add(track_ids[offset:offset+chunk_size])
+                    break
+                except requests.exceptions.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 412 and remaining_retries:
+                        remaining_retries -= 1
+                        playlist._reparse()  # refresh the etag before retrying
+                        time.sleep(1)
+                        continue
+                    raise
             offset += count
             progress.update(count)
 
