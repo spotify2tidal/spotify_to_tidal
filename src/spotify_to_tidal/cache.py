@@ -79,6 +79,36 @@ class TrackMatchCache:
         self.data[mapping[0]] = mapping[1]
 
 
+class AlbumMatchCache:
+    """
+    Non-persistent mapping of spotify album ids -> tidal album ids
+    This should NOT be accessed concurrently from multiple processes
+    """
+    data: Dict[str, str] = {}
+
+    def get(self, album_id: str) -> str | None:
+        return self.data.get(album_id, None)
+
+    def insert(self, mapping: tuple[str, str]):
+        self.data[mapping[0]] = mapping[1]
+
+
+class ArtistMatchCache:
+    """
+    Non-persistent mapping of spotify artist ids -> tidal artist ids
+    This should NOT be accessed concurrently from multiple processes
+    """
+    data: Dict[str, str] = {}
+
+    def get(self, artist_id: str) -> str | None:
+        return self.data.get(artist_id, None)
+
+    def insert(self, mapping: tuple[str, str]):
+        self.data[mapping[0]] = mapping[1]
+
+
 # Main singleton instance
 failure_cache = MatchFailureDatabase()
 track_match_cache = TrackMatchCache()
+album_match_cache = AlbumMatchCache()
+artist_match_cache = ArtistMatchCache()

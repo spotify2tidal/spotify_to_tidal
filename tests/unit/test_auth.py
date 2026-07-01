@@ -6,7 +6,8 @@ import tidalapi
 import yaml
 import sys
 from unittest import mock
-from spotify_to_tidal.auth import open_spotify_session, open_tidal_session, SPOTIFY_SCOPES
+from spotify_to_tidal.auth import open_spotify_session, open_tidal_session, SPOTIFY_SCOPES_DEFAULT
+from spotify_to_tidal import auth as auth_mod
 
 
 def test_open_spotify_session(mocker):
@@ -37,7 +38,7 @@ def test_open_spotify_session(mocker):
     # Assert that the SpotifyOAuth was called with correct parameters
     mock_spotify_oauth.assert_called_once_with(
         username="test_user",
-        scope=SPOTIFY_SCOPES,
+        scope=SPOTIFY_SCOPES_DEFAULT,
         client_id="test_client_id",
         client_secret="test_client_secret",
         redirect_uri="http://127.0.0.1/",
@@ -48,6 +49,31 @@ def test_open_spotify_session(mocker):
     # Assert that the Spotify instance was created
     mock_spotify_instance.assert_called_once_with(oauth_manager=mock_oauth_instance)
     assert spotify_instance == mock_spotify_instance.return_value
+
+
+def test_open_spotify_session_custom_scope(mocker):
+    mock_spotify_oauth = mocker.patch(
+        "spotify_to_tidal.auth.spotipy.SpotifyOAuth", autospec=True
+    )
+    mock_spotify_instance = mocker.patch(
+        "spotify_to_tidal.auth.spotipy.Spotify", autospec=True
+    )
+    mock_oauth_instance = mock_spotify_oauth.return_value
+    mock_oauth_instance.get_access_token.return_value = "mock_access_token"
+
+    mock_config = {
+        "username": "test_user",
+        "client_id": "test_client_id",
+        "client_secret": "test_client_secret",
+        "redirect_uri": "http://127.0.0.1/",
+        "open_browser": True,
+    }
+
+    open_spotify_session(mock_config, scope=auth_mod.SPOTIFY_SCOPE_USER_FOLLOW_READ)
+
+    mock_spotify_oauth.assert_called_once()
+    assert mock_spotify_oauth.call_args.kwargs["scope"] == auth_mod.SPOTIFY_SCOPE_USER_FOLLOW_READ
+    mock_spotify_instance.assert_called_once_with(oauth_manager=mock_oauth_instance)
 
 
 def test_open_spotify_session_oauth_error(mocker):
