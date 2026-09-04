@@ -1,14 +1,33 @@
 import asyncio
 import math
+import time
 from typing import List
+import requests
 import tidalapi
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as atqdm
 
+def _retry_on_stale_etag(playlist: tidalapi.UserPlaylist, action, retries: int=5):
+    """ Tidal guards playlist mutations with an ETag and answers 412 when ours is stale,
+        which happens when its replicas lag behind a rapid run of chunked edits.
+        Refresh the ETag and back off before giving up. """
+    delay = 1
+    for attempt in range(retries):
+        try:
+            return action()
+        except requests.exceptions.HTTPError as e:
+            if e.response is None or e.response.status_code != 412 or attempt == retries - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+            playlist._reparse()
+
 def _remove_indices_from_playlist(playlist: tidalapi.UserPlaylist, indices: List[int]):
-    headers = {'If-None-Match': playlist._etag}
     index_string = ",".join(map(str, indices))
-    playlist.request.request('DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
+    def _delete():
+        headers = {'If-None-Match': playlist._etag}
+        playlist.request.request('DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
+    _retry_on_stale_etag(playlist, _delete)
     playlist._reparse()
 
 def clear_tidal_playlist(playlist: tidalapi.UserPlaylist, chunk_size: int=20):
@@ -23,7 +42,8 @@ def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: 
     with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
+            chunk = track_ids[offset:offset+chunk_size]
+            _retry_on_stale_etag(playlist, lambda: playlist.add(chunk))
             offset += count
             progress.update(count)
 
