@@ -11,6 +11,7 @@ import requests
 import sys
 import spotipy
 import tidalapi
+from tidalapi.exceptions import InvalidISRC, ObjectNotFound
 from .tidalapi_patch import add_multiple_tracks_to_playlist, clear_tidal_playlist, get_all_favorites, get_all_playlists, get_all_playlist_tracks
 import time
 from tqdm.asyncio import tqdm as atqdm
@@ -99,6 +100,22 @@ def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
     return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+    def _lookup_by_isrc():
+        # the text searches below can only reach a track whose title and artist are spelled
+        # roughly as Spotify spells them, so try the recording's ISRC first: it identifies the
+        # track exactly and costs a single request
+        isrc = spotify_track['external_ids'].get('isrc')
+        if not isrc:
+            return None
+        try:
+            hits = tidal_session.get_tracks_by_isrc(isrc)
+        except (ObjectNotFound, InvalidISRC):
+            return None # Tidal carries no track with this ISRC, or rejects the code
+        for track in hits or []:
+            if isrc_match(track, spotify_track):
+                failure_cache.remove_match_failure(spotify_track['id'])
+                return track
+
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
@@ -122,6 +139,10 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
             if match(track, spotify_track):
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
+    await rate_limiter.acquire()
+    isrc_lookup = await asyncio.to_thread( _lookup_by_isrc )
+    if isrc_lookup:
+        return isrc_lookup
     await rate_limiter.acquire()
     album_search = await asyncio.to_thread( _search_for_track_in_album )
     if album_search:
