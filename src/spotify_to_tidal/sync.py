@@ -106,7 +106,11 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
             album_result = tidal_session.search(query, models=[tidalapi.album.Album])
             for album in album_result['albums']:
                 if album.num_tracks >= spotify_track['track_number'] and test_album_similarity(spotify_track['album'], album):
-                    album_tracks = album.tracks()
+                    try:
+                        album_tracks = album.tracks()
+                    except tidalapi.exceptions.ObjectNotFound:
+                        # album is not available in the user's country; try the next candidate
+                        continue
                     if len(album_tracks) < spotify_track['track_number']:
                         assert( not len(album_tracks) == album.num_tracks ) # incorrect metadata :(
                         continue
@@ -123,11 +127,18 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
     await rate_limiter.acquire()
-    album_search = await asyncio.to_thread( _search_for_track_in_album )
+    try:
+        album_search = await asyncio.to_thread( _search_for_track_in_album )
+    except tidalapi.exceptions.ObjectNotFound:
+        # a Tidal object referenced during the search is unavailable; fall through to a name search
+        album_search = None
     if album_search:
         return album_search
     await rate_limiter.acquire()
-    track_search = await asyncio.to_thread( _search_for_standalone_track )
+    try:
+        track_search = await asyncio.to_thread( _search_for_standalone_track )
+    except tidalapi.exceptions.ObjectNotFound:
+        track_search = None
     if track_search:
         return track_search
 
@@ -139,6 +150,10 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
     try:
         return await function(*args, **kwargs)
     except (tidalapi.exceptions.TooManyRequests, requests.exceptions.RequestException, spotipy.exceptions.SpotifyException) as e:
+        # access errors (e.g. a Spotify playlist the user cannot read) will never
+        # recover by retrying, so let the caller handle them right away
+        if isinstance(e, spotipy.exceptions.SpotifyException) and e.http_status in (403, 404):
+            raise e
         if remaining:
             print(f"{str(e)} occurred, retrying {remaining} times")
         else:
@@ -158,10 +173,16 @@ async def repeat_on_request_error(function, *args, remaining=5, **kwargs):
         return await repeat_on_request_error(function, *args, remaining=remaining-1, **kwargs)
 
 
+def _extract_track_from_spotify_item(item: dict):
+    # the Spotify API renamed the playlist entry field from 'track' to 'item'
+    # https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api
+    return item.get('item') if item.get('item') is not None else item.get('track')
+
+
 async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[dict]:
     output = []
     results = fetch_function(0)
-    output.extend([item['track'] for item in results['items'] if item['track'] is not None])
+    output.extend([track for track in (_extract_track_from_spotify_item(item) for item in results['items']) if track is not None])
 
     # Get all the remaining tracks in parallel
     if results['next']:
@@ -171,14 +192,14 @@ async def _fetch_all_from_spotify_in_chunks(fetch_function: Callable) -> List[di
             desc="Fetching additional data chunks"
         )
         for extra_result in extra_results:
-            output.extend([item['track'] for item in extra_result['items'] if item['track'] is not None])
+            output.extend([track for track in (_extract_track_from_spotify_item(item) for item in extra_result['items']) if track is not None])
 
     return output
 
 
 async def get_tracks_from_spotify_playlist(spotify_session: spotipy.Spotify, spotify_playlist):
     def _get_tracks_from_spotify_playlist(offset: int, playlist_id: str):
-        fields = "next,total,limit,items(track(name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc))),type"
+        fields = "next,total,limit,items(item(type,name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)),track(type,name,album(name,artists),artists,track_number,duration_ms,id,external_ids(isrc)),type),type"
         return spotify_session.playlist_tracks(playlist_id=playlist_id, fields=fields, offset=offset)
 
     print(f"Loading tracks from Spotify playlist '{spotify_playlist['name']}'")
@@ -349,9 +370,27 @@ async def sync_favorites(spotify_session: spotipy.Spotify, tidal_session: tidala
         print("No new tracks to add to Tidal favorites")
 
 def sync_playlists_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, playlists, config: dict):
+  skipped = []
   for spotify_playlist, tidal_playlist in playlists:
     # sync the spotify playlist to tidal
-    asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
+    try:
+      asyncio.run(sync_playlist(spotify_session, tidal_session, spotify_playlist, tidal_playlist, config) )
+    except spotipy.exceptions.SpotifyException as e:
+      # some playlists (e.g. Spotify-owned editorial playlists) are not readable
+      # through the API; warn and keep going instead of aborting the whole sync
+      if e.http_status in (403, 404):
+        print(f"Skipping unreadable Spotify playlist '{spotify_playlist['name']}': {e.http_status}")
+        skipped.append(spotify_playlist['name'])
+      else:
+        raise
+    except requests.exceptions.HTTPError as e:
+      # Tidal throttling that outlasted all retries: leave this playlist partial
+      # and carry on; a later run will finish it
+      status = e.response.status_code if e.response is not None else None
+      print(f"Skipping Spotify playlist '{spotify_playlist['name']}' after repeated Tidal errors: {status}")
+      skipped.append(spotify_playlist['name'])
+  if skipped:
+    print(f"Skipped {len(skipped)} playlist(s): {', '.join(skipped)}")
 
 def sync_favorites_wrapper(spotify_session: spotipy.Spotify, tidal_session: tidalapi.Session, config):
     asyncio.run(main=sync_favorites(spotify_session=spotify_session, tidal_session=tidal_session, config=config))
