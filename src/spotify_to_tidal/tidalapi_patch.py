@@ -1,14 +1,39 @@
 import asyncio
 import math
+import time
 from typing import List
+import requests
 import tidalapi
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as atqdm
 
+# Tidal responds with 412 when writes come in too quickly; these are transient
+RETRYABLE_STATUS_CODES = (412, 429, 500, 502, 503, 504)
+# backoff schedule raises the ceiling with each retry so sustained throttling is outlasted
+_retry_wait_schedule = {8: 2, 7: 5, 6: 15, 5: 30, 4: 60, 3: 120, 2: 180, 1: 240}
+# pause between successful write chunks to avoid tripping Tidal's rate limiter
+_write_pause_seconds = 0.5
+
+def _retry_on_tidal_error(function, *args, remaining=8, on_retry=None, **kwargs):
+    # retry transient Tidal write errors (notably 412 rate limiting) with backoff
+    while True:
+        try:
+            return function(*args, **kwargs)
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if not remaining or status not in RETRYABLE_STATUS_CODES:
+                raise
+            wait = _retry_wait_schedule.get(remaining, 2)
+            print(f"Tidal returned HTTP {status}, retrying in {wait}s ({remaining} attempts left)")
+            if on_retry is not None:
+                on_retry()
+            time.sleep(wait)
+            remaining -= 1
+
 def _remove_indices_from_playlist(playlist: tidalapi.UserPlaylist, indices: List[int]):
     headers = {'If-None-Match': playlist._etag}
     index_string = ",".join(map(str, indices))
-    playlist.request.request('DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
+    _retry_on_tidal_error(playlist.request.request, 'DELETE', (playlist._base_url + '/items/%s') % (playlist.id, index_string), headers=headers)
     playlist._reparse()
 
 def clear_tidal_playlist(playlist: tidalapi.UserPlaylist, chunk_size: int=20):
@@ -18,14 +43,16 @@ def clear_tidal_playlist(playlist: tidalapi.UserPlaylist, chunk_size: int=20):
             _remove_indices_from_playlist(playlist, indices)
             progress.update(len(indices))
     
-def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: List[int], chunk_size: int=20):
+def add_multiple_tracks_to_playlist(playlist: tidalapi.UserPlaylist, track_ids: List[int], chunk_size: int=10):
     offset = 0
     with tqdm(desc="Adding new tracks to Tidal playlist", total=len(track_ids)) as progress:
         while offset < len(track_ids):
             count = min(chunk_size, len(track_ids) - offset)
-            playlist.add(track_ids[offset:offset+chunk_size])
+            # refresh the playlist etag before retrying so an out-of-date If-None-Match does not block the write
+            _retry_on_tidal_error(playlist.add, track_ids[offset:offset+chunk_size], on_retry=playlist._reparse)
             offset += count
             progress.update(count)
+            time.sleep(_write_pause_seconds)
 
 async def _get_all_chunks(url, session, parser, params={}) -> List[tidalapi.Track]:
     """ 
